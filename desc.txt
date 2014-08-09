@@ -1,0 +1,172 @@
+
+Son Of Darts
+This contest ended on 20 Jun 2010
+
+The Darts Problem
+
+Suppose that you have a dartboard that is divided into R regions. Each
+dartboard region has a positive integer value associated with it. Further
+suppose that you have D darts and that you throw each of them at the dartboard.
+Each dart either lands in one of the board's R regions or misses the board
+altogether. Your score is the sum of the values for the regions in which the
+darts land. A dart that misses the board contributes nothing to your score. If
+multiple darts land in the same region, you accumulate the value for that
+region multiple times.
+
+For example, suppose that R = 5, that the dartboard regions have values (1, 2,
+4, 7, 11), and that D = 3. If your three darts land in regions 2, 4 and 11 you
+score 17 points. If one dart misses the board and the other two land in region
+7 you score 14 points.
+
+The Darts Problem is this: for a given R and D, determine what values should be
+associated with a dartboard's R regions in order to maximize the smallest score
+unattainable by throwing D darts.
+
+For example, again suppose that R = 5 and D = 3. If you choose the values (1,
+2, 4, 7, 11) for the board's 5 regions, then the smallest score unattainable
+with your 3 darts is 27. But if you choose the values (1, 4, 6, 14, 15) the
+smallest unattainable score is 37. The second choice of values is therefore a
+better choice for 3 darts and 5 regions.
+
+By the way, the Darts Problem is more commonly known as the Postage Stamp
+problem, wherein you are asked to determine which R denominations of stamps to
+issue in order to maximize the smallest postage unattainable with D stamps.
+The Contest
+
+Submit (see How to Enter, below) your best solutions to the Darts Problem for
+the following values of R and D:
+
+D = number of darts 	R = number of dartboard regions
+3 	1 through 40
+4 	1 through 30
+5 	1 through 20
+6 	1 through 10
+
+Thus, there are 100 problems and you are asked to submit 100 solutions. You can
+submit more than one solution for the same problem, but if you do we count only
+your best solution. There is no penalty for submitting multiple solutions for
+the same problem.
+
+See The Scoring System, below, to learn how we determine the winner.
+The Prizes
+
+The prizes are metal sculptures by Bathsheba Grossman. The 1st place winner has
+his pick from among the larger ones, and 2nd place chooses from the smaller.
+How to Enter
+
+Just paste your solutions into the large box on the Submit page and click
+Submit. Format your solutions as follows:
+
+    An individual solution consists of
+        a number (representing the number of darts), followed by
+        a colon, followed by
+        a comma-delimited list of region values.
+
+    Submit multiple solutions in a single batch by separating them with
+    semicolons. Do not place a semicolon after your last solution.  Include
+    spaces and line breaks anywhere you like (except within a number) to
+    improve readability.
+
+There's an example of an entry in the Frequently Asked Questions section, below.
+
+Do not submit entries under more than one account. This is important. Do not
+submit entries under more than one account.  The Scoring System
+
+Each time you submit a solution we will merge it with your prior solutions, if
+any. The result will be a virtual entry containing your best solutions for each
+of the 100 problems. We will give each of these 100 solutions a subscore from 0
+to 1 and their sum will be your contest score.
+
+We score the individual solutions as follows. If your solution is the best that
+was submitted for that problem, we give it 1 point; otherwise we give it only a
+fraction of a point. The fraction is the solution's smallest-unattainable-score
+divided by the best smallest-unattainable-score submitted by anyone for that
+same problem.
+
+In case of a tie, preference is given to the entrant whose latest improved
+solution was submitted least recently.
+
+Let's walk through a simplified example. Suppose that we reduce the contest to
+only 3 problems -- finding the dartboard regions that maximize the smallest
+unattainable score in these cases:
+
+4 darts, 2 regions
+4 darts, 3 regions
+4 darts, 4 regions
+
+Further suppose that we have only 3 entrants (Dana, Pat and Syd) and that these
+are their best solutions for each of the 3 problems:
+
+	Dana 	Pat 	Syd
+4 darts, 2 regions 	1, 2 	1, 3 	1, 4
+4 darts, 3 regions 	1, 4, 7 	1, 2, 3 	1, 3, 5
+4 darts, 4 regions 	1, 3, 5, 7 	1, 4, 7, 10 	1, 2, 3, 4
+
+The smallest unattainable scores corresponding to these solutions are:
+	Dana 	Pat 	Syd 	Best Solution
+4 darts, 2 regions 	9 	11 	11 	11
+4 darts, 3 regions 	17 	13 	17 	17
+4 darts, 4 regions 	23 	23 	17 	23
+
+The total scores for each entrant are computed as follows:
+	Dana 	Pat 	Syd
+4 darts, 2 regions 	9/11 = 0.82 	11/11 = 1.00 	11/11 = 1.00
+4 darts, 3 regions 	17/17 = 1.00 	13/17 = 0.76 	17/17 = 1.00
+4 darts, 4 regions 	23/23 = 1.00 	23/23 = 1.00 	17/23 = 0.74
+Total 	2.82 	2.76 	2.74
+
+Finally, the standings page listing is as follows:
+Rank 	Score 	Contestant
+1 	2.82 	Dana
+2 	2.76 	Pat
+3 	2.74 	Syd
+My Lawyer Would Want Me to Say This
+
+I reserve the right to discontinue the contest at any time. I reserve the right
+to disqualify any entry or entrant for any reason that suits me. I reserve the
+right to interpret the rules as I see fit. I reserve the right to change the
+contest rules in mid-contest. In all matters contest-related, my word is
+final.  Frequently Asked Questions
+
+Can you give an example of an entry?
+
+Here's an entry that contains a single solution. It's for 3 darts and 7 regions.
+ 3: 1,2,3,5,8,13,21
+
+Here's another entry that contains solutions for 5 of the problems, some of
+which are for 4 darts and some of which are for 5. Note that the last solution
+is not ended with a semicolon.
+ 4: 1; 4: 1,2; 4: 1,3,4; 5: 1,2; 5: 1,2,3
+
+The immediately preceding solution could also be split across 5 lines for added
+readability. 4: 1;
+4: 1,2;
+4: 1,3,4;
+5: 1,2;
+5: 1,2,3
+
+Can teams enter the contest?
+
+Collaboration is allowed. However, only one of the collaborators may register.
+If two contestants are found to have collaborated, even if this occurred before
+one or both registered, both will be disqualified.
+
+What information about my solutions can I share in the discussion group?
+
+There are two types of information that you are forbidden to post. The first is
+specific solutions. The second is code. You may post scores, so if you want to
+tell everyone that you got a raw score of 4999 for (3 darts, 20 regions), go
+right ahead. You may also discuss the algorithms you are using.
+
+How can I find out my subscores for the 100 individual problems?
+
+You can't. Seriously.
+
+Can I enter the contest more than once, using different names?
+
+No. Nor can you enter more than once using the same name.
+
+How do you know which questions are going to be asked frequently, before any
+questions have been asked?
+
+It's a gift. 
