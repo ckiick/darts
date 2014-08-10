@@ -24,7 +24,13 @@
 
 #define VER	"0.7.0"
 
+#ifdef __sparc
 #include <sys/types.h>
+#else
+#include <inttypes.h>
+#include <time.h>
+#include <stdint.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -283,11 +289,11 @@ initstuff(int D, int R)
 {
 	int i;
 
-	DBG(DBG_INIT, ("zeroing out hbos %d bytes%s\n", sizeof(block_t)));
+	DBG(DBG_INIT, ("zeroing out hbos %d bytes\n", sizeof(block_t)));
 	bzero(&hbos, sizeof(block_t));
-	DBG(DBG_INIT, ("zeroing out vals %d bytes%s\n", sizeof(vals_t)));
+	DBG(DBG_INIT, ("zeroing out vals %d bytes\n", sizeof(vals_t)));
 	bzero(&vals, sizeof(vals_t));
-	DBG(DBG_INIT, ("zeroing out besties %d bytes%s\n", sizeof(besties)));
+	DBG(DBG_INIT, ("zeroing out besties %d bytes\n", sizeof(besties)));
 	bzero(besties, sizeof(besties));
 
 	/* set the degenerate case up first. */
@@ -411,7 +417,7 @@ main(int argc, char **argv)
 		case -1: dbg = DBG_NONE;
 			break;
 	}
-	DBG(DBG_DBG, ("debug is 0x%X\n", dbg));
+	DBG(DBG_DBG, ("debug is 0x%lX\n", dbg));
 	DBG(DBG_VER, ("version %s\n", VER));
 
 	initstuff(D, R);
