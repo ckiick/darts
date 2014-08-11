@@ -1,0 +1,293 @@
+
+
+Bit Array (bar) library - extended, variable length bit vectors.
+
+A bit array consists of n bit, contiguous in memory, where 0 <= n <= MAXINT.
+A bit array (bar) has a defined length in bits, some internal state, and
+a defined representation.
+
+A bar is represented by a bar_t object.  This object should be considered
+opaque to end users, as internal implementation and representation may
+change.  A valid, initialized 0-length bar can be constructed with a 0-filled
+bar_t.
+
+
+Representation:
+
+MSb/LSb - most/least significant bit
+	The MSb of a byte, or a word in a register, is always the leftmost
+bit.  The actual computer architecture representation is not relevant: the
+C language always uses left-most MSb.
+
+MSB/LSB - most/least significant Byte
+	A bar always uses the native endian representation for in-memory
+bar_t's.  A bar saved to a file must denote which byte order is used. A
+implementation must convert non-native byte-order to native byte-order when
+reading a bar saved to a file.
+
+MSW/LSW - most/least significant Word
+	Internally, a bar is implemented as a contiguous array of words.
+Purely as a matter of convenience, the LSW is defined as word 0 of the
+array.  Note that this is irrelevant to the end user.
+An implementation must produce consistent, valid results no matter which
+word order is used.  When writing a bar to a file, the word order must be
+denoted.
+
+word size (32 vs 64 bit)
+	The word size of a bar should not be visible to an end user.  An
+implementation should use the largest natural word size that can be
+efficiently implemented.  The word size is significant when saving a
+bar to a file and must be denoted.  On reading a file an implementation
+must convert the saved word size to the native word size.  For most
+implementations, it is strongly suggested to use a 64-bit word size.
+
+User visible data structures.
+	The only exported data structure is the bar_t object.  All operations
+are done on pointers to a bar_t.  This object is considered to be opaque.
+
+Errors.
+	If an error occurs that cannot be reported via a function return
+value, then a message is emitted to stderr describing the error and the
+program is aborted.
+
+Interface definitions:
+
+	bar_t *baralloc(uint numbits);
+Allocate a bar_t structure and initialize it to hold numbits. The
+bits will all be zeros.  If an error occurs NULL is returned (typically
+for ENOMEM), and errno may be set.
+
+	void barfree(bar_t *bar);
+Free a bar_t allocated by baralloc.
+
+	void barsize(bar_t *bar, uint numbits);
+Set the size of a bar to numbits.  The bar_t may be larger or smaller
+than numbits, and may have initial size 0.
+
+	uint barlen(bar_t *bar);
+Return the length in bits of bar.
+
+	bar_t *bardup(bar_t *bar);
+Create a clone of a bar.  Returns a pointer to a bar of the same size
+and contents as the bar parameter.  If memory cannot be allocated, returns
+NULL.
+
+	uint barcpy(bar_t *dest, bar_t *src);
+Copy bar src to bar dest.  The dest is resized if it is not the same size
+as src.  Returns number of bits copied.
+
+	uint barget(bar_t *bar, uint bit_index);
+Get the value of the bit at index bit_index of bar.  If bit_index is
+greater than the size of bar, returns 0.
+
+	void barset(bar_t *bar, uint bit_index);
+Set the bit at bit_index to 1 in bar. If bit_index is larger than the size
+of bar, bar is resized to hold bit_index.
+
+	void barclr(bar_t *bar, uint bit_index);
+Set the bit at bit_index to 0 in bar. If bit_index is larger than the size
+of bar, bar is resized to hold bit_index.
+
+	uint barflip(bar_t *bar, uint bit_index);
+Toggle the bit at bit_index in bar. If bit_index is larger than the size
+of bar, bar is resized to hold bit_index, and the bit is set to 1.
+
+	void barassign(bar_t *bar, uint bit_index, uint val);
+Sets the value of bit bit_index in bar, 0 if val is 0, otherwise 1.
+If bit_index is larger than the size of bar, bar is resized to hold bit_index.
+
+	void barfill(bar_t *bar, uint val);
+Sets all bits in bar to either 0 if val is 0, otherwise sets all bits to 1.
+
+	void barzero(bar_t *bar);
+Clears all bits in bar.  Equivalent to barfill(&bar, 0);
+
+	void barnot(bar_t *dest, bar_t *src);
+Negate all bits in src and copy to dest.  The src bar is not changed.
+The dest bar is resized if necessary.  The src and dest bar may be the same.
+
+	void barand(bar_t *dest, bar_t *src1, bar_t src2);
+Put the bitwise AND of src1 and src2 into dest.  If src1 and src are not the
+same size, assumes 0s for the smaller bar.  The dest bar is resized if needed.
+The dest bar may be the same as either of the src bars.
+
+	void baror(bar_t *dest, bar_t *src1, bar_t src2);
+Put the bitwise OR of src1 and src2 into dest.  If src1 and src are not the
+same size, assumes 0s for the smaller bar.  The dest bar is resized if needed.
+The dest bar may be the same as either of the src bars.
+
+	void barxor(bar_t *dest, bar_t *src1, bar_t src2);
+Put the bitwise XOR of src1 and src2 into dest.  If src1 and src are not the
+same size, assumes 0s for the smaller bar.  The dest bar is resized if needed.
+The dest bar may be the same as either of the src bars.
+
+	void barlsr(bar_t *dest, bar_t *src, uint dist);
+Copy the bits from src to dest, shifted dist bits towards the LSb.
+This will cause the loss of bits on the LSb end.
+The dist parameter may be 0 or greater than the size of src.  The dest
+bar will be resized to the same size as src.  Bits shifted 'in' are zero
+filled.
+
+	void barlsl(bar_t *dest, bar_t *src, uint dist);
+Copy the bits from src to dest, shifted dist bits towards the MSb.
+This will cause the loss of bits on the MSb end.
+The dist parameter may be 0 or greater than the size of src.  The dest
+bar will be resized to the same size as src.  Bits shifted 'in' are zero
+filled.
+
+	void barlsle(bar_t *dest, bar_t *src, uint dist);
+Copy the bits from src to dest, shifted dist bits towards the MSb.
+No bits are lost: the dest bar is extended to accomodate the increased
+size.  The dist parameter may be 0 or greater than the size of src. 
+Bits shifted 'in' are zero filled.
+
+	int barcmp(bar_t *bar1, bar_t *bar2);
+Returns 0 if bar1 and bar2 are equal, -1 if bar1 < bar2, or 1 if bar1 > bar2.
+Two bars are equal if all significan bits are equal.  Leading zeros are not
+significant.  The bar1 and bar2 need not be the same size: the smaller is
+assumed to be zero filled to match the larger.
+
+	uint barprint(bar_t *bar, char *str, int base);
+Convert the bar to a string representation using the specified base.
+Base must be one of: 2, 8, or 16.  Other bases may, but are not requried to
+be supported.
+
+The str parameter must have enough space for all bits in bar plus a null
+character.  An empty bar (length 0) is converted to the string "0".
+Return value is the length in characters of str, not including the terminating
+NULL.
+
+	uint barscan(bar_t *bar, char *str, int base);
+Convert the string representation of a bar in str to a bar_t.  The str
+parameter must consist of only the characters appropriate to base, and will
+terminate on any other character.  Base can be one of 2, 8 or 16. Other
+bases are not required to be supported. An empty string is converted to a bar
+of length 0.  The return value is the length in bits of bar.
+
+	int barwrite(bar_t *bar, int fd);
+Write the bar to a file.   The fd must be open for writing.  On success,
+returns the number of bytes written to fd.  On failure, returns < 0 and
+errno may be set.
+
+	int barread(bar_t *bar, int fd);
+Reads a bar from a file. The bar must have been written with barwrite.
+On success returns the length in bits of bar.  If the file is not in the
+correct format, returns 0 and bar will be empty.  On read failure, returns
+< 0 and errno may be set.
+
+	unsigned long bar2long(bar_t *bar);
+Return the first (sizeof(unsigned long)*8) bits from bar. If the size of
+bar is smaller than the size in bits of an unsigned long, the extra bits
+are zero filled.  An empty bar returns 0.
+
+	void long2bar(bar_t *bar, unsigned long word);
+Sets the the size of bar to the size in bits of an unsigned long and
+copies the value of word into bar.
+
+	void barcvt(bar_t *dest, bar_t *src);
+Copies src to dest, but each word of dest has it's bytes swapped from src.
+In other words, changes the byte order (endianness) from src to dest.
+
+	uint barpopc(bar_t *bar);
+Returns the number of bits set in bar.  Eg: population count or hamming
+weight.
+
+	int barffs(bar_t *bar);
+Returns the index of the first bit set in bar.  If bar does not contain
+any 1 bits, returns -1.
+
+	int barfns(bar_t *bar, uint bit_index);
+Returns the index of the first one bit in bar, at or after bit_index.
+If there are no one bits to be found or bit_index is > size of bar, returns
+-1.
+
+	int barffz(bar_t *bar);
+Returns the index of the first zero bit in bar.  If bar does not contain
+any 0 bits, returns -1.
+
+	int barfnz(bar_t *bar, uint bit_index);
+Returns the index of the first zero bit in bar, at or after bit_index.
+If there are no zero bits to be found or bit_index is > size of bar, returns
+-1.
+
+Other functions and operations may be supported.
+
+File format
+	The file format for a bar saved to a file consists of 3 parts:
+- a header
+- a bar_t object
+- An array of words containing the bits in the bar
+
+The header contains 4 32-bit values.
+- the bar magic value of "BAFOFOBA", represented as a 32 bit hex value.
+- a 4-byte version number, consisting of a 16-bit major version and a
+16-bit minor version.
+- vector of 32 bit flags.
+- the size of the rest of the file, not including the header, in words.
+
+The bar_t object will consist of 4 words from the in-memory object,
+which can be used to reconstruct the object when read in.  The size of
+the bar must be either stored directly, or be computable from this data.
+
+The rest of the file is the actual values of the bits.
+
+Values are always written to the file in the native byte order. It is the
+responsibility of the code reading the file to perform any byte-order or
+word size conversions necessary.
+
+The version number consists of major and minor parts.  When reading a saved
+bar, the implementation must check the version numbers against what it supports.
+An implementation must be able to read all formats with major numbers <=
+the version it writes.  Versions with only different minor versions numbers
+must be backwards compatible.
+
+The bit flags denote the exact format of the file, including the byte order,
+word size and other information.  Unknown or undefined bits are ignored.
+The following bits are initially defined:
+
+Bit 0 Byte Order. 1 = Big Endian (MSB on left), 0 = Little Endian (LSB on left)
+bit 1 word order. 0 = LSW at index 0, 1 = MSW at index 0.
+bit 2 word size. 0 = 32bits. 1 = 64 bits.
+
+The implementation should write a bar in it's native byte-order and word
+size.  It is the responsibility of the reading implementation to do any
+necessary conversions, or to report an error if it cannot handle the given
+format.
+
+
+Implementation details.
+
+The following are suggested implementation details. An implementation is
+not requried to follow them.
+
+bar_t structure suggested contents
+	- numbits : the number of bits in this bar.
+	- usedwords : number of words used to hold numbits
+	- capacity : number of words currently allocated
+	- words : pointer to array of words allocated for this bar
+The size of the bar_t should therefore be 4 words, which should fit nicely
+into a cache line.
+
+The code for an implementation should be byte-order and word-size agnostic.
+
+The suggested word size is 64 bits, which should be easily supported on most
+modern processors. The suggested word-order is to have the LSW at index 0.
+This is convenient when bit operations add to the size of the bar, as the
+contents do not have to be shifted.
+
+It is suggested that the capacity always be a power of 2, to make allocations
+quick and to keep data aligned.  It is suggested that the initial capacity
+be enough words to fill a single cache line.
+
+For efficient implementation of operations, the operations should be
+always be performed a word at a time.  When copying words between bars,
+the standard memmove function should be used. Not only does it handle
+overlap of source and destination, but it should be optimized for the
+native architecture.
+
+All operations should first check the size of the operands.  It should
+never assume that space has already been allocated for the bits.  Any
+result resizing should check for and report allocation errors.  Any operand
+may be an "empty", zero-filled bar_t structure, and must be handled.
+
+

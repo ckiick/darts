@@ -22,7 +22,8 @@
  * -R string: use string to restart from checkpoint.
  */
 
-#define VER	"0.7.0"
+#define VER	"0.8.0"	// using  bit_array
+
 
 #ifdef __sparc
 #include <sys/types.h>
@@ -36,7 +37,8 @@
 #include <strings.h>
 #include <sys/time.h>
 #include <unistd.h>
-
+#include "bar.h"
+#include "bit_array.h"
 #define DBG_INIT	0x00000001
 #define DBG_FILLIN	0x00000002
 #define DBG_MRF		0x00000004
@@ -79,7 +81,8 @@ char		*cpstr = NULL;
 int limits[6] = { 40, 40, 40, 30, 20, 10 };
 
 typedef struct _sc {
-	uint8_t s[MAXVAL];
+	bar s;
+//	uint8_t s[MAXVAL];
 	int gap;
 	int maxval;
 } sc_t;
@@ -110,7 +113,7 @@ dumpscore(sc_t score)
 	int i;
 	printf("%d:[%d] ", score.gap, score.maxval);
 	for (i=0; i <= score.maxval +1; i++) {
-		if (score.s[i]) printf("%d ",i);
+		if (barget(&(score.s),i)) printf("%d ",i);
 	}
 //	printf("\n");
 }
@@ -160,8 +163,16 @@ fillin(int d, int r, int val)
 
 	if (d==0) {
 		if (r > 0) {
-			*scores = hbos.pl[r-1].sc[d];
-			scores->s[val]++;
+			dsc = &(hbos.pl[r-1].sc[d]);
+			scores->gap = dsc->gap;
+			barcpy(&(scores->s), &(dsc->s));
+DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d, r-1)) {
+			dumpscore(*dsc);
+			printf(" to ");
+			dumpscore(*scores);
+			printf("\n");
+}
+			barset(&(scores->s), val);
 			scores->maxval=val;
 			if (scores->gap == val) {
 				scores->gap++;
@@ -171,30 +182,39 @@ fillin(int d, int r, int val)
 	} else {
 		/* otherwise, d > 1 */
 		fillin(d-1, r, val);
+/* what we want to do is copy, shift, or. */
 		dsc = &(hbos.pl[r].sc[d-1]);
-		*scores = *dsc;
+		barcpy(&(scores->s),&(dsc->s));
 DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d-1, r)) {
 			dumpscore(*scores);
 			printf("\n");
 }
-		for (i = 0; i <= scores->maxval; i++) {
-			if (dsc->s[i]) {
-				scores->s[i+val]++;
-			}
-		}
-		scores->maxval = val + i - 1;
+		bareshl( &(scores->s), val, 0);
+		baror(&(scores->s), &(dsc->s), &(scores->s));
+		scores->gap = dsc->gap;
+		scores->maxval = dsc->maxval + val;
 DBG(DBG_FILLIN2, ("added %d ", val)) {
 	dumpscore(*dsc);
 	printf(" to make  ");
 	dumpscore(*scores);
 	printf("\n");
 }
+/*
+		for (i = 0; i <= scores->maxval; i++) {
+			if (dsc->s[i]) {
+				scores->s[i+val]++;
+			}
+		}
+*/
 		if (r > 0) {
 			/* now do the d,r-1 half. */
 			dsc = &(hbos.pl[r-1].sc[d]);
+			baror(&(scores->s), &(dsc->s), &(scores->s));
+/*
 			for (i = 0; i <= dsc->maxval; i++) {
 				scores->s[i] += dsc->s[i];
 			}
+*/
 		}
 DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d,r-1)) {
 	dumpscore(*dsc);
@@ -203,7 +223,7 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d,r-1)) {
 	printf("\n");
 }
 		/* now find the new gap. */
-		while (scores->s[scores->gap]) {
+		while (barget(&(scores->s), scores->gap)) {
 			scores->gap++;
 		}
 		DBG(DBG_FILLIN, ("for %d,%d,maxval=%d gap=%d \n", d,r, scores->maxval, scores->gap));
@@ -297,7 +317,7 @@ initstuff(int D, int R)
 	bzero(besties, sizeof(besties));
 
 	/* set the degenerate case up first. */
-	hbos.pl[0].sc[0].s[1]=1;
+	barset(&(hbos.pl[0].sc[0].s),1);
 	hbos.pl[0].sc[0].gap = 2;
 	hbos.pl[0].sc[0].maxval = 1;
 	hbos.pl[0].rval = 1;
