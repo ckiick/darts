@@ -40,6 +40,14 @@ int barcmp(bar_t *bar1, bar_t *bar2);
 uint_t barprint(bar_t *bar, char *str, int base);
 uint_t barscan(bar_t *bar, char *str, int base);
 
+/* missing features? */
+
+/*
+	barnull - set size to 0 and deallocate storage
+	nobar = constant empty bar.
+
+*/
+
 #ifdef NOTYET
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);

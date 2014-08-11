@@ -8,10 +8,17 @@
 
 #define WORD_SIZE	(sizeof(word_t)*8)
 #define	INIT_CAP	8	/* initial capacity. */
-#define B2W(bits)	(((bits)+WORD_SIZE)/WORD_SIZE)
 #define POW2(n)		(1UL << (WORD_SIZE - __builtin_clzl(n)))
 #define MIN(a, b)  (((a) <= (b)) ? (a) : (b))
 #define MAX(a, b)  (((a) >= (b)) ? (a) : (b)) 
+
+#ifdef DEBUG
+#define DBG(pargs) 		\
+	if (printf("%s:",__func__) + printf pargs)
+#else /* DEBUG */
+#define DBG(f, pargs)		\
+	if (0)
+#endif /* non-DEBUG */
 
 bar_t *baralloc(uint_t numbits)
 {
@@ -22,7 +29,7 @@ bar_t *baralloc(uint_t numbits)
 		return NULL;
 	}
 	b->numbits = numbits;
-	b->usedwords = B2W(numbits);
+	b->usedwords = numbits / WORD_SIZE;
 	b->capacity = POW2(b->usedwords + 1);
 	b->capacity = MAX(b->capacity, INIT_CAP);
 	b->words = malloc( b->capacity * sizeof(word_t));
@@ -49,8 +56,8 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 	uint_t used, cap, shift;
 	bar_t *ptr;
 
-	if (bar->numbits == numbits) return;
-	used = B2W(numbits);
+	if (bar->numbits == numbits) return bar;
+/* error */	used = numbits / WORD_SIZE;
 	if (numbits > bar->numbits) {
 		if (used > bar->usedwords) {
 			if (used > bar->capacity) {
@@ -60,7 +67,7 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 					return NULL;
 				}
 				bar->words = (word_t *)ptr;
-				memset(&(bar->words[bar->numbits]), 0, (used - bar->usedwords)*sizeof(word_t));
+				memset(&(bar->words[bar->usedwords]), 0, (used - bar->usedwords)*sizeof(word_t));
 				bar->capacity = cap;
 			}
 			bar->usedwords = used;
@@ -114,8 +121,8 @@ uint_t barget(bar_t *bar, uint bit_index)
 	if (bit_index >= bar->numbits) {
 		return 0;
 	}
-	wndx = bar->numbits / WORD_SIZE;
-	bit = bar->numbits % WORD_SIZE;
+	wndx = bit_index / WORD_SIZE;
+	bit = bit_index % WORD_SIZE;
 	if (( 1UL << bit) & bar->words[wndx]) {
 		return 1;
 	} else {
@@ -127,7 +134,7 @@ int barassign(bar_t *bar, uint_t bit_index, uint val)
 {
 	uint_t wndx, bit, mask;
 	if (bit_index >= bar->numbits) {
-		if (barsize(bar, bit_index) == NULL) {
+		if (barsize(bar, bit_index+1) == NULL) {
 			return -1;
 		}
 	}
@@ -152,7 +159,7 @@ int barflip(bar_t *bar, uint bit_index)
 {
 	uint_t wndx, bit, mask;
 	if (bit_index >= bar->numbits) {
-		if (barsize(bar, bit_index) == NULL) {
+		if (barsize(bar, bit_index+1) == NULL) {
 			return -1;
 		}
 	}
@@ -198,7 +205,6 @@ int barnot(bar_t *dest, bar_t *src)
 int barand(bar_t *dest, bar_t *src1, bar_t *src2)
 {
 	uint_t ndx, sz, minw;
-	bar_t *bigger;
 
 	sz = MAX(src1->numbits, src2->numbits);
 	if (sz >= dest->numbits) {
@@ -383,7 +389,7 @@ static int _w2str(char *str, word_t w, uint_t bits, uint_t logbase)
 	word_t mask = 0xfUL >> (4 - logbase);
 	int i = 0, j = 0;
 
-	if (bits = 0) bits = WORD_SIZE;
+	if (bits == 0) bits = WORD_SIZE;
 	while (j < bits) {
 		str[i++] = _digits[w & mask];
 		w >>= logbase;
@@ -424,9 +430,8 @@ uint_t barprint(bar_t *bar, char *str, int base)
 static int _str2w(char *str, word_t *w, uint_t bits, uint_t logbase)
 {
 	int i = 0, j = 0;
-	word_t mask = 0xfUL >> (4 - logbase);
 
-	if (bits = 0) bits = WORD_SIZE;
+	if (bits == 0) bits = WORD_SIZE;
 	*w = 0;
 	while (j < bits) {
 		*w <<= logbase;
@@ -478,6 +483,11 @@ uint_t barscan(bar_t *bar, char *str, int base)
 
 /* save the rest for later. we've made enough bugs for now. */
 #ifdef NOTDEF
+
+need to add: barnull, nobar.
+DEBUG stuff:
+	barcheck
+
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
 unsigned long bar2long(bar_t *bar);
