@@ -1,21 +1,17 @@
 
 /* implementation of bit array (bar).  Vastly simplified from previous. */
 
+#include <stdlib.h>	/* realloc */
+#include <string.h>	/* memset, memmove */
+
 #include "bar.h"
 
-typedef unsigned long word_t;
-typedef struct {
-	word_t	numbits;
-	word_t	usedwords;
-	word_t	capacity;
-	word_t	*words;
-} bar_t;
-
 #define WORD_SIZE	(sizeof(word_t)*8)
-
 #define	INIT_CAP	8	/* initial capacity. */
 #define B2W(bits)	(((bits)+WORD_SIZE)/WORD_SIZE)
 #define POW2(n)		(1UL << (WORD_SIZE - __builtin_clzl(n)))
+#define MIN(a, b)  (((a) <= (b)) ? (a) : (b))
+#define MAX(a, b)  (((a) >= (b)) ? (a) : (b)) 
 
 bar_t *baralloc(uint_t numbits)
 {
@@ -63,7 +59,7 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 				if (ptr == NULL) {
 					return NULL;
 				}
-				bar->words = ptr;
+				bar->words = (word_t *)ptr;
 				memset(&(bar->words[bar->numbits]), 0, (used - bar->usedwords)*sizeof(word_t));
 				bar->capacity = cap;
 			}
@@ -152,11 +148,7 @@ int barassign(bar_t *bar, uint_t bit_index, uint val)
 	}
 }
 
-#define barset(b, i)	barassign(b, i, 1);
-
-#define barclr(b, i)	barassign(b, i, 0);
-
-int barflip(bar_t *bar, uint bit_index);
+int barflip(bar_t *bar, uint bit_index)
 {
 	uint_t wndx, bit, mask;
 	if (bit_index >= bar->numbits) {
@@ -183,8 +175,6 @@ void barfill(bar_t *bar, uint_t val)
 	memset(bar->words, val ? 0xFF : 0x00, bar->usedwords * sizeof(word_t));
 }
 
-#define barzero(b)	barfill(b, 0);
-
 int barnot(bar_t *dest, bar_t *src)
 {
 	uint_t ndx, shift;
@@ -194,18 +184,18 @@ int barnot(bar_t *dest, bar_t *src)
 			return -1;
 		}
 	}
-	for (ndx = 0; ndx < bar->usedwords; ndx++) {
+	for (ndx = 0; ndx < dest->usedwords; ndx++) {
 		dest->words[ndx] = ~ src->words[ndx];
 	}
-	shift = numbits % WORD_SIZE;
+	shift = dest->numbits % WORD_SIZE;
 	if (shift) {
-		bar->words[bar->usedwords-1] <<= (WORD_SIZE - shift);
-		bar->words[bar->usedwords-1] >>= (WORD_SIZE - shift);
+		dest->words[dest->usedwords-1] <<= (WORD_SIZE - shift);
+		dest->words[dest->usedwords-1] >>= (WORD_SIZE - shift);
 	}
-	return bar->numbits;
+	return dest->numbits;
 }
 
-int barand(bar_t *dest, bar_t *src1, bar_t src2)
+int barand(bar_t *dest, bar_t *src1, bar_t *src2)
 {
 	uint_t ndx, sz, minw;
 	bar_t *bigger;
@@ -223,7 +213,7 @@ int barand(bar_t *dest, bar_t *src1, bar_t src2)
 	return sz;
 }
 
-int baror(bar_t *dest, bar_t *src1, bar_t src2)
+int baror(bar_t *dest, bar_t *src1, bar_t *src2)
 {
 	uint_t ndx, sz, minw;
 	bar_t *bigger;
@@ -251,7 +241,7 @@ int baror(bar_t *dest, bar_t *src1, bar_t src2)
 	return dest->numbits;
 }
 
-int barxor(bar_t *dest, bar_t *src1, bar_t src2)
+int barxor(bar_t *dest, bar_t *src1, bar_t *src2)
 {
 	uint_t ndx, sz, minw;
 	bar_t *bigger;
@@ -291,8 +281,8 @@ int barlsr(bar_t *dest, bar_t *src, uint_t dist)
 	shift = dist % WORD_SIZE;
 	used = dist / WORD_SIZE;
 	if (shift == 0) {
-		memmove(&(dest->words[0]), &(src->words[dist / WORD_SIZE]), used * sizeof(word_t));
-		memset( &(dest->words[used]), 0, (dist/WORD_SIZE) * sizeof(word_t));
+		memmove(&(dest->words[0]), &(src->words[dest->usedwords - used]), used * sizeof(word_t));
+		memset(&(dest->words[used-1]), 0, used * sizeof(word_t));
 		return dest->numbits;
 	}
 
@@ -304,7 +294,7 @@ int barlsr(bar_t *dest, bar_t *src, uint_t dist)
 	return dest->numbits;
 }
 
-void barlsl(bar_t *dest, bar_t *src, uint_t dist)
+int barlsl(bar_t *dest, bar_t *src, uint_t dist)
 {
 	uint_t used, ndx, shift;
 
@@ -316,23 +306,178 @@ void barlsl(bar_t *dest, bar_t *src, uint_t dist)
 	shift = dist % WORD_SIZE;
 	used = dist / WORD_SIZE;
 	if (shift == 0) {
-		memmove(&(dest->words[used]), &(src->words[ndx]), (dest->usedwords - used) * sizeof(word_t));
+		memmove(&(dest->words[used]), &(src->words[0]), (dest->usedwords - used) * sizeof(word_t));
 		memset(&(dest->words[0]), 0, used * sizeof(word_t));
 		return dest->numbits;
 	}
 
-	for (ndx = dest->usedwords-1; ndx > 0; ndx++) {
-		dest->words[ndx] = (src->words[ndx] >> shift) | (src->words[ndx+used+1] << (WORD_SIZE - shift));
+	for (ndx = dest->usedwords-1; ndx > dest->usedwords - used -1 ; ndx--) {
+		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[ndx-used-1] << (WORD_SIZE - shift));
 	}
-	dest->words[ndx] = src->words[ndx+used] >> shift;
-	memset(&(dest->words[ndx+1]), 0, used * sizeof(word_t));
+	dest->words[ndx] = src->words[ndx+used] << shift;
+	memset(&(dest->words[0]), 0, used * sizeof(word_t));
 	return dest->numbits;
 }
 
-void barlsle(bar_t *dest, bar_t *src, uint_t dist);
-int barcmp(bar_t *bar1, bar_t *bar2);
-uint_t barprint(bar_t *bar, char *str, int base);
-uint_t barscan(bar_t *bar, char *str, int base);
+int barlsle(bar_t *dest, bar_t *src, uint_t dist)
+{
+	uint_t used, ndx, shift;
+
+	if (dest->numbits != src->numbits + dist) {
+		if (barsize(dest, src->numbits + dist) == NULL) {
+			return -1;
+		}
+	}
+	shift = dist % WORD_SIZE;
+	used = dist / WORD_SIZE;
+	if (shift == 0) {
+		memmove(&(dest->words[used]), &(src->words[0]), (dest->usedwords - used) * sizeof(word_t));
+		memset(&(dest->words[0]), 0, used * sizeof(word_t));
+		return dest->numbits;
+	}
+
+	for (ndx = dest->usedwords-1; ndx > dest->usedwords - used -1 ; ndx--) {
+		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[ndx-used-1] << (WORD_SIZE - shift));
+	}
+	dest->words[ndx] = src->words[ndx+used] << shift;
+	memset(&(dest->words[0]), 0, used * sizeof(word_t));
+	return dest->numbits;
+}
+
+// bar1 and bar2 do not have to be the same size.
+int barcmp(bar_t *bar1, bar_t *bar2)
+{
+	uint_t ndx;
+
+	if ((bar1->numbits == 0) && (bar2->numbits == 0)) {
+		return 0;
+	}
+
+	if (bar1->usedwords > bar2->usedwords) {
+		for (ndx = bar1->usedwords-1; ndx >= bar2->usedwords; ndx--) {
+			if (bar1->words[ndx]) {
+				return 1;
+			}
+		}
+	} else if (bar1->usedwords < bar2->usedwords) {
+		for (ndx = bar2->usedwords -1; ndx >= bar1->usedwords; ndx--) {
+			if (bar2->words[ndx]) {
+				return -1;
+			}
+		}
+	}
+	/* should be even now.*/
+	for (; ndx >= 0; ndx--) {
+		if (bar1->words[ndx] > bar2->words[ndx]) {
+			return 1;
+		} else if (bar1->words[ndx] < bar2->words[ndx]) {
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static const char _digits[17] = "0123456789ABCDEF";
+static int _w2str(char *str, word_t w, uint_t bits, uint_t logbase)
+{
+	word_t mask = 0xfUL >> (4 - logbase);
+	int i = 0, j = 0;
+
+	if (bits = 0) bits = WORD_SIZE;
+	while (j < bits) {
+		str[i++] = _digits[w & mask];
+		w >>= logbase;
+		j += logbase;
+	}
+	str[i] = '\0';
+	return i;
+}
+
+uint_t barprint(bar_t *bar, char *str, int base)
+{
+	uint_t i = 0, ndx, end, logbase;
+
+	if (str == NULL) return 0;
+	if (base == 2) {
+		logbase = 1;
+	} else if (base == 8) {
+		logbase = 3;
+	} else if (base == 16) {
+		logbase = 4;
+	} else {
+		return 0;
+	}
+
+	end = bar->numbits % WORD_SIZE;
+	ndx = bar->usedwords - 1;
+	if (end) {
+		i += _w2str(str, bar->words[ndx], end, logbase);
+		ndx--;	
+	}
+	for ( ; ndx >= 0; ndx--) {
+		i += _w2str( &(str[i]), bar->words[ndx], WORD_SIZE, logbase);
+	}
+	return i;
+}
+
+#define C2V(c)  ((c <= '9') ? (c - '0') : (c - 'A' + 10))
+static int _str2w(char *str, word_t *w, uint_t bits, uint_t logbase)
+{
+	int i = 0, j = 0;
+	word_t mask = 0xfUL >> (4 - logbase);
+
+	if (bits = 0) bits = WORD_SIZE;
+	*w = 0;
+	while (j < bits) {
+		*w <<= logbase;
+		*w |= C2V(str[i]);
+		j += logbase;
+		i++;
+	}
+	return i;
+}
+
+uint_t barscan(bar_t *bar, char *str, int base)
+{
+	uint_t i = 0, len, ndx, end, logbase;
+	char digits[17] = "0123456789ABCDEF";
+
+	if (str == NULL) return 0;
+	if (base == 2) {
+		logbase = 1;
+	} else if (base == 8) {
+		logbase = 3;
+	} else if (base == 16) {
+		logbase = 4;
+	} else {
+		return 0;
+	}
+	digits[base] = '\0';
+	len = strspn(str, digits);
+	if (len == 0) return 0;
+	if (len * logbase >= bar->numbits) {
+		if (barsize(bar, len * logbase) == NULL) {
+			return 0;
+		}
+	}
+
+	end = bar->numbits % WORD_SIZE;
+	ndx = bar->usedwords - 1;
+	if (end) {
+		len -= end / logbase;
+		i += _str2w(&(str[len]), &(bar->words[ndx]), end, logbase);
+		ndx--;	
+	}
+	for ( ; ndx >= 0; ndx--) {
+		len -= WORD_SIZE / logbase;
+		_str2w(&(str[len]), &(bar->words[ndx]), WORD_SIZE, logbase);
+	}
+	return bar->numbits;
+}
+
+
+/* save the rest for later. we've made enough bugs for now. */
+#ifdef NOTDEF
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
 unsigned long bar2long(bar_t *bar);
@@ -343,4 +488,4 @@ int barffs(bar_t *bar);
 int barfns(bar_t *bar, uint_t bit_index);
 int barffz(bar_t *bar);
 int barfnz(bar_t *bar, uint_t bit_index);
-
+#endif
