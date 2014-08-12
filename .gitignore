@@ -1,0 +1,12 @@
+darts
+darts.o
+BitArray
+
+core
+*,v
+
+bar/bartest
+bar/bartest64
+bar/core
+bar/*.o
+

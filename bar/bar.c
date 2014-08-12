@@ -268,7 +268,7 @@ int barxor(bar_t *dest, bar_t *src1, bar_t *src2)
 	}
 	minw = MIN(src1->usedwords, src2->usedwords);
 	for (ndx = 0; ndx < minw; ndx++) {
-		dest->words[ndx] = src1->words[ndx] | src2->words[ndx];
+		dest->words[ndx] = src1->words[ndx] ^ src2->words[ndx];
 	}
 	if (src1->usedwords == src2->usedwords) {
 		return sz;
