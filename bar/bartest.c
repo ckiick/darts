@@ -118,6 +118,11 @@ test_barsize_null()
 
 	barnull(&bar1);
 	assert(barlen(&bar1) == 0);
+
+	/* null case. */
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+
 	return 0;
 }
 
@@ -933,7 +938,7 @@ test_barshift()
 	assert(barlen(&bar3) == 0);
 	rv = barlsle(&bar3, &bar1, tlen);
 	assert(rv == 0);
-	assert(barlen(&bar3) == 0);
+	assert(barlen(&bar3) == tlen);
 
 	barp1 = barsize(&bar1, tlen);
 	assert(barp1 != NULL);
@@ -944,18 +949,19 @@ test_barshift()
 	assert(barget(&bar1, 0) == 1);
 
 	/* first shift 1 around. */
-	for (i = 0; i < tlen-2; i++) {
-		rv = barlsl(&bar3, &bar1, 1);
+	for (i = 1; i < tlen-2; i++) {
+		assert(barget(&bar1, 0) == 1);
+		rv = barlsl(&bar3, &bar1, i);
 		assert(rv == barlen(&bar1));
 		assert(barlen(&bar1) == barlen(&bar3));
-		assert(barget(&bar3, i) == 0);
-		assert(barget(&bar3, i+1) == 1);
-		assert(barget(&bar3, i+2) == 0);
+		assert((i == 0) || (barget(&bar3, i-1) == 0));
+		assert(barget(&bar3, i) == 1);
+		assert(barget(&bar3, i+1) == 0);
 		rv = barlsr(&bar2, &bar3, i);
 		assert(rv == barlen(&bar2));
-		assert(barlen(&bar2) == barlen(&bar3));
-		assert(barlen(&bar2) == barlen(&bar1));
-		assert(barget(&bar3, 0) == 1);
+		assert((barlen(&bar2) == barlen(&bar3)));
+		assert((barlen(&bar2) == barlen(&bar1)));
+		assert(barget(&bar2, 0) == 1);
 	}
 	/* test shifting all the way. */
 	barzero(&bar3);
@@ -1131,7 +1137,7 @@ main(int argc, char **argv)
 	vprintf(VVERB, "barxor test passed\n");
 
 	vprintf(VVERB, "test barshift\n");
-	rv = test_barxor();
+	rv = test_barshift();
 	if (rv != 0) {
 		vprintf(VERR, "barshift test failed\n");
 		return rv;

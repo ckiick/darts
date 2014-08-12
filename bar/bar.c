@@ -302,15 +302,24 @@ int barlsr(bar_t *dest, bar_t *src, uint_t dist)
 			return -1;
 		}
 	}
+	if (src->numbits == 0) {
+		return 0;
+	}
+	if (dist >= dest->numbits) {
+		barzero(dest);
+		return dest->numbits;
+	}
 	shift = dist % WORD_SIZE;
-	used = dist / WORD_SIZE;
+	used = B2W(dist);
 	if (shift == 0) {
-		memmove(&(dest->words[0]), &(src->words[dest->usedwords - used]), used * sizeof(word_t));
-		memset(&(dest->words[used-1]), 0, used * sizeof(word_t));
+		memmove(&(dest->words[0]), &(src->words[used]), (dest->usedwords - used) * sizeof(word_t));
+		if (used > 0) {
+			memset(&(dest->words[dest->usedwords-used]), 0, (dest->usedwords-used) * sizeof(word_t));
+		}
 		return dest->numbits;
 	}
 
-	for (ndx = 0 ; ndx < dest->usedwords - used - 1; ndx++) {
+	for (ndx = 0 ; ndx < (dest->usedwords-1) - used; ndx++) {
 		dest->words[ndx] = (src->words[ndx + used] >> shift) | (src->words[ndx+used+1] << (WORD_SIZE - shift));
 	}
 	dest->words[ndx] = src->words[ndx+used] >> shift;
@@ -318,6 +327,7 @@ int barlsr(bar_t *dest, bar_t *src, uint_t dist)
 	return dest->numbits;
 }
 
+/* if dist=0, this is copy. If src is 0, just resize */
 int barlsl(bar_t *dest, bar_t *src, uint_t dist)
 {
 	uint_t used, ndx, shift;
@@ -327,19 +337,33 @@ int barlsl(bar_t *dest, bar_t *src, uint_t dist)
 			return -1;
 		}
 	}
+	if (src->numbits == 0) {
+		return 0;
+	}
+	if (dist >= dest->numbits) {
+		barzero(dest);
+		return dest->numbits;
+	}
 	shift = dist % WORD_SIZE;
-	used = dist / WORD_SIZE;
+	used = B2W(dist);
 	if (shift == 0) {
 		memmove(&(dest->words[used]), &(src->words[0]), (dest->usedwords - used) * sizeof(word_t));
-		memset(&(dest->words[0]), 0, used * sizeof(word_t));
+		if (used > 0) {
+			memset(&(dest->words[0]), 0, used * sizeof(word_t));
+		}
 		return dest->numbits;
 	}
 
-	for (ndx = dest->usedwords-1; ndx > dest->usedwords - used -1 ; ndx--) {
-		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[ndx-used-1] << (WORD_SIZE - shift));
+	for (ndx = dest->usedwords-1; ndx > (dest->usedwords-1)-used) ; ndx--) {
+		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[(ndx-used)-1] >> (WORD_SIZE - shift));
 	}
-	dest->words[ndx] = src->words[ndx+used] << shift;
-	memset(&(dest->words[0]), 0, used * sizeof(word_t));
+	dest->words[ndx] = src->words[0] << shift;
+	if (used > 0) {
+		memset(&(dest->words[0]), 0, (used-1) * sizeof(word_t));
+	}
+	/* chop top */
+	dest->words[dest->usedwords-1] <<= (WORD_SIZE - shift);
+	dest->words[dest->usedwords-1] >>= (WORD_SIZE - shift);
 	return dest->numbits;
 }
 
@@ -352,6 +376,9 @@ int barlsle(bar_t *dest, bar_t *src, uint_t dist)
 			return -1;
 		}
 	}
+	if (src->numbits == 0) {
+		return 0;
+	}
 	shift = dist % WORD_SIZE;
 	used = dist / WORD_SIZE;
 	if (shift == 0) {
@@ -363,7 +390,7 @@ int barlsle(bar_t *dest, bar_t *src, uint_t dist)
 	for (ndx = dest->usedwords-1; ndx > dest->usedwords - used -1 ; ndx--) {
 		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[ndx-used-1] << (WORD_SIZE - shift));
 	}
-	dest->words[ndx] = src->words[ndx+used] << shift;
+	dest->words[ndx-1] = src->words[ndx+used-1] << shift;
 	memset(&(dest->words[0]), 0, used * sizeof(word_t));
 	return dest->numbits;
 }
