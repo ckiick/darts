@@ -9,8 +9,20 @@
 #include <strings.h>
 #include <inttypes.h>
 
+/*
+	TODO:
+test_bardup
+test_barcpy
+test_barcmp
+test_barprint
+test_barscan 
+CLI options processing
+change to test harness design
+more specific test cases (overlap, d=s, word and capacity boundaries.
+*/
+
 #include "bar.h"
-/* include it twice to ensure no leaks. */
+/* include it twice to ensure no double defs. */
 #include "bar.h"
 
 /* useful macros */
@@ -82,7 +94,7 @@ test_baralloc_free()
 }
 
 int
-test_barsize()
+test_barsize_null()
 {
 	uint_t len;
 	uint_t testlens[] = { 0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33,
@@ -104,6 +116,8 @@ test_barsize()
 		barp2 = NULL;
 	}
 
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
 	return 0;
 }
 
@@ -197,6 +211,9 @@ test_barget_set_clr()
 	assert(rv == 0);
 	assert(barlen(&bar1) <= maxtb + 1);
 
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+
 	return 0;
 }
 
@@ -230,6 +247,10 @@ test_barfill()
 		b = barget(&bar1, i);
 		assert(b == 0);
 	}
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+
 	return 0;
 }
 
@@ -288,6 +309,9 @@ test_barflip()
 		b = barget(&bar1, i);
 		assert(b == 0);
 	}
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
 
 	return 0;
 }
@@ -349,6 +373,13 @@ test_barnot()
 	for (i = 0; i < tlen; i++) {
 		assert(barget(&bar3, i) == barget(&bar1, i));
 	}
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+	barnull(&bar2);
+	assert(barlen(&bar2) == 0);
+	barnull(&bar3);
+	assert(barlen(&bar3) == 0);
 
 	return 0;
 }
@@ -515,6 +546,13 @@ test_barand()
 		b = barget(&bar3, i);
 		assert(b == 0);
 	}
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+	barnull(&bar2);
+	assert(barlen(&bar2) == 0);
+	barnull(&bar3);
+	assert(barlen(&bar3) == 0);
 
 	return 0;
 }
@@ -688,6 +726,14 @@ test_baror()
 		b = barget(&bar3, i);
 		assert(b == 0);
 	}
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+	barnull(&bar2);
+	assert(barlen(&bar2) == 0);
+	barnull(&bar3);
+	assert(barlen(&bar3) == 0);
+
 	return 0;
 }
 
@@ -853,6 +899,14 @@ test_barxor()
 		b = barget(&bar3, i);
 		assert(b == 0);
 	}
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+	barnull(&bar2);
+	assert(barlen(&bar2) == 0);
+	barnull(&bar3);
+	assert(barlen(&bar3) == 0);
+
 	return 0;
 }
 
@@ -969,6 +1023,13 @@ test_barshift()
 		}
 	}
 
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+	barnull(&bar2);
+	assert(barlen(&bar2) == 0);
+	barnull(&bar3);
+	assert(barlen(&bar3) == 0);
+
 	return 0;
 }
 
@@ -1000,13 +1061,13 @@ main(int argc, char **argv)
 	}
 	vprintf(VVERB, "baralloc_free test passed\n");
 
-	vprintf(VVERB, "test barsize\n");
-	rv = test_barsize();
+	vprintf(VVERB, "test barsize_null\n");
+	rv = test_barsize_null();
 	if (rv != 0) {
-		vprintf(VERR, "barsize test failed\n");
+		vprintf(VERR, "barsize_null test failed\n");
 		return rv;
 	}
-	vprintf(VVERB, "barsize test passed\n");
+	vprintf(VVERB, "barsize_null test passed\n");
 
 	/* we don't explicitly test barlen becuase it's used in all the
 	 *other tests.

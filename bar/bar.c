@@ -21,6 +21,10 @@
 	if (0)
 #endif /* non-DEBUG */
 
+const bar_t nobar = {
+	0, 0, 0, NULL
+};
+
 bar_t *baralloc(uint_t numbits)
 {
 	bar_t *b;
@@ -55,7 +59,7 @@ void barfree(bar_t *bar)
 bar_t *barsize(bar_t *bar, uint_t numbits)
 {
 	uint_t used, cap, shift;
-	bar_t *ptr;
+	word_t *ptr;
 
 	if (bar->numbits == numbits) return bar;
 	used = B2W(numbits);
@@ -67,7 +71,7 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 				if (ptr == NULL) {
 					return NULL;
 				}
-				bar->words = (word_t *)ptr;
+				bar->words = ptr;
 				memset(&(bar->words[bar->capacity]), 0, (cap - bar->capacity)*sizeof(word_t));
 				bar->capacity = cap;
 			}
@@ -86,6 +90,12 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 	}
 	bar->numbits = numbits;
 	return bar;
+}
+
+void barnull(bar_t *bar)
+{
+	free(bar->words);
+	*bar = nobar;
 }
 
 uint_t barlen(bar_t *bar)

@@ -16,11 +16,14 @@ typedef struct {
 	word_t	*words;
 } bar_t;
 
+/* to help with initialization. */
+extern const bar_t nobar;
 
 /* function templates */
 bar_t *baralloc(uint_t numbits);
 void barfree(bar_t *bar);
 bar_t *barsize(bar_t *bar, uint_t numbits);
+void barnull(bar_t *bar);
 uint_t barlen(bar_t *bar);
 bar_t *bardup(bar_t *bar);
 uint_t barcpy(bar_t *dest, bar_t *src);
@@ -47,7 +50,7 @@ uint_t barscan(bar_t *bar, char *str, int base);
 /*
 	barnull - set size to 0 and deallocate storage
 	nobar = constant empty bar.
-
+	DEBUG barcheck() - validation check on bar.
 */
 
 #ifdef NOTYET
