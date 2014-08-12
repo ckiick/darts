@@ -32,7 +32,7 @@
 #define VNOISY	4
 #define VDUMP	5
 
-int verbose = 1;
+int verbose = VDEBUG;
 
 /* some basic stuff. */
 int
@@ -856,6 +856,121 @@ test_barxor()
 	return 0;
 }
 
+int
+test_barshift()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2, bar3;
+	int i, j, k;
+	uint_t b;
+	int tlen = 39;
+	int rv;
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+	bzero(&bar3, sizeof(bar_t));
+
+	/* handle empty case */
+	rv = barlsr(&bar3, &bar1, tlen);
+	assert(rv == 0);
+	assert(barlen(&bar3) == 0);
+	rv = barlsl(&bar3, &bar1, tlen);
+	assert(rv == 0);
+	assert(barlen(&bar3) == 0);
+	rv = barlsle(&bar3, &bar1, tlen);
+	assert(rv == 0);
+	assert(barlen(&bar3) == 0);
+
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+
+	rv = barset(&bar1, 0);
+	assert(rv == 0);
+	assert(barget(&bar1, 0) == 1);
+
+	/* first shift 1 around. */
+	for (i = 0; i < tlen-2; i++) {
+		rv = barlsl(&bar3, &bar1, 1);
+		assert(rv == barlen(&bar1));
+		assert(barlen(&bar1) == barlen(&bar3));
+		assert(barget(&bar3, i) == 0);
+		assert(barget(&bar3, i+1) == 1);
+		assert(barget(&bar3, i+2) == 0);
+		rv = barlsr(&bar2, &bar3, i);
+		assert(rv == barlen(&bar2));
+		assert(barlen(&bar2) == barlen(&bar3));
+		assert(barlen(&bar2) == barlen(&bar1));
+		assert(barget(&bar3, 0) == 1);
+	}
+	/* test shifting all the way. */
+	barzero(&bar3);
+	assert(barlen(&bar3) == tlen);
+	rv = barset(&bar1, 0);
+	assert(rv == 0);
+	assert(barget(&bar1, 0) == 1);
+
+	rv = barlsr(&bar3, &bar1, tlen+1);
+	for (i = 0; i < tlen; i++) {
+		b = barget(&bar3, i);
+		assert(b == 0);
+	}
+	rv = barset(&bar1, tlen-1 );
+	assert(rv == 0);
+	assert(barget(&bar1, tlen-1) == 1);
+	barzero(&bar3);
+	rv = barlsl(&bar3, &bar1, tlen);
+	for (i = 0; i < tlen; i++) {
+		b = barget(&bar3, i);
+		assert(b == 0);
+	}
+	/* test different shift sizes */
+	for (j = 0; j < tlen; j++) {
+		barfill(&bar1, 1);
+		rv = barlsl(&bar2, &bar1, j);
+		assert(rv == barlen(&bar1));
+		assert(barlen(&bar2) == barlen(&bar1));
+		for (i = 0; i < tlen - j; i++) {
+			b = barget(&bar2, i);
+			assert(b == 1);
+		}
+		for (i = tlen - j; i < tlen; i++) {
+			b = barget(&bar2, i);
+			assert(b == 0);
+		}
+		rv = barlsr(&bar3, &bar2, j);
+		assert(rv == barlen(&bar2));
+		assert(barlen(&bar2) == barlen(&bar3));
+		for (i = 0; i < j; i++) {
+			b = barget(&bar2, i);
+			assert(b == 0);
+		}
+		for (i = j; i < tlen; i++) {
+			b = barget(&bar2, i);
+			assert(b == 1);
+		}
+	}
+	/* test lse, and double use */
+	j = tlen;
+	barfill(&bar1, 1);
+	for (i = 0; i < tlen; i++) {
+		rv = barlsle(&bar1, &bar1, i);
+		j += i;
+		assert(rv == j);
+		assert(barlen(&bar1) == j);
+		rv = barget(&bar1, 0);
+		for (k = 0; k < tlen; k++) {
+			rv = barget(&bar1, j - k);
+			assert(rv == 1);
+		}
+		for (k = 0; k < j - tlen; k++) {
+			rv = barget(&bar1, j - k);
+			assert(rv == 0);
+		}
+	}
+
+	return 0;
+}
 
 /*
  * later on we'll add some verbiage and maybe debug stuff.
@@ -953,6 +1068,14 @@ main(int argc, char **argv)
 		return rv;
 	}
 	vprintf(VVERB, "barxor test passed\n");
+
+	vprintf(VVERB, "test barshift\n");
+	rv = test_barxor();
+	if (rv != 0) {
+		vprintf(VERR, "barshift test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barshift test passed\n");
 
 	vprintf(VVERB, "test program complete.\n");
 	return 0;

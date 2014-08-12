@@ -133,7 +133,8 @@ uint_t barget(bar_t *bar, uint bit_index)
 
 int barassign(bar_t *bar, uint_t bit_index, uint val)
 {
-	uint_t wndx, bit, mask;
+	uint_t wndx, bit;
+	word_t mask;
 	if (bit_index >= bar->numbits) {
 		if (barsize(bar, bit_index+1) == NULL) {
 			return -1;
@@ -142,23 +143,24 @@ int barassign(bar_t *bar, uint_t bit_index, uint val)
 	wndx = bit_index / WORD_SIZE;
 	bit = bit_index % WORD_SIZE;
 	mask = 1UL << bit;
-	bit = bar->words[wndx] & mask;
+	if (bar->words[wndx] & mask) {
+		bit = 1;
+	} else {
+		bit = 0;
+	}
 	if (val) {
 		/* set bit to 1 */
 		bar->words[wndx] |= mask;
 	} else {
 		bar->words[wndx] &= ~mask;
 	}
-	if (bit) {
-		return 1;
-	} else {
-		return 0;
-	}
+	return bit;
 }
 
 int barflip(bar_t *bar, uint bit_index)
 {
-	uint_t wndx, bit, mask;
+	uint_t wndx, bit;
+	word_t mask;
 	if (bit_index >= bar->numbits) {
 		if (barsize(bar, bit_index+1) == NULL) {
 			return -1;
@@ -169,9 +171,7 @@ int barflip(bar_t *bar, uint bit_index)
 	mask = 1UL << bit;
 
 	bar->words[wndx] ^= mask;
-	bit = bar->words[wndx] & mask;
-
-	if (bit) {
+	if (bar->words[wndx] & mask) {
 		return 1;
 	} else {
 		return 0;
