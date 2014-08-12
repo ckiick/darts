@@ -7,6 +7,8 @@
 
 typedef unsigned long word_t;
 
+typedef unsigned int uint_t;
+
 typedef struct {
 	word_t	numbits;
 	word_t	usedwords;

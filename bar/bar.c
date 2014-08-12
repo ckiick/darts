@@ -8,6 +8,7 @@
 
 #define WORD_SIZE	(sizeof(word_t)*8)
 #define	INIT_CAP	8	/* initial capacity. */
+#define B2W(b)		(((b)+WORD_SIZE-1)/WORD_SIZE)
 #define POW2(n)		(1UL << (WORD_SIZE - __builtin_clzl(n)))
 #define MIN(a, b)  (((a) <= (b)) ? (a) : (b))
 #define MAX(a, b)  (((a) >= (b)) ? (a) : (b)) 
@@ -29,7 +30,7 @@ bar_t *baralloc(uint_t numbits)
 		return NULL;
 	}
 	b->numbits = numbits;
-	b->usedwords = numbits / WORD_SIZE;
+	b->usedwords = B2W(numbits);
 	b->capacity = POW2(b->usedwords + 1);
 	b->capacity = MAX(b->capacity, INIT_CAP);
 	b->words = malloc( b->capacity * sizeof(word_t));
@@ -57,7 +58,7 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 	bar_t *ptr;
 
 	if (bar->numbits == numbits) return bar;
-/* error */	used = numbits / WORD_SIZE;
+	used = B2W(numbits);
 	if (numbits > bar->numbits) {
 		if (used > bar->usedwords) {
 			if (used > bar->capacity) {
@@ -67,7 +68,7 @@ bar_t *barsize(bar_t *bar, uint_t numbits)
 					return NULL;
 				}
 				bar->words = (word_t *)ptr;
-				memset(&(bar->words[bar->usedwords]), 0, (used - bar->usedwords)*sizeof(word_t));
+				memset(&(bar->words[bar->capacity]), 0, (cap - bar->capacity)*sizeof(word_t));
 				bar->capacity = cap;
 			}
 			bar->usedwords = used;
