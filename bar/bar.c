@@ -180,7 +180,14 @@ int barflip(bar_t *bar, uint bit_index)
 
 void barfill(bar_t *bar, uint_t val)
 {
+	uint_t shift;
+
 	memset(bar->words, val ? 0xFF : 0x00, bar->usedwords * sizeof(word_t));
+	shift = bar->numbits % WORD_SIZE;
+	if (shift) {
+		bar->words[bar->usedwords-1] <<= (WORD_SIZE - shift);
+		bar->words[bar->usedwords-1] >>= (WORD_SIZE - shift);
+	}
 }
 
 int barnot(bar_t *dest, bar_t *src)
