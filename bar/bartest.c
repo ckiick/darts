@@ -1474,6 +1474,66 @@ return 0;
 	return 0;
 }
 
+/* test byte order. oz is 1 or 0. */
+#define	TBO(bar, oz)	{ \
+	assert(barget(&bar, 0) == oz); \
+	assert(barget(&bar, 7) == oz); \
+	assert(barget(&bar, 8) != oz); \
+	assert(barget(&bar, 15) == oz); \
+	assert(barget(&bar, 16) == oz); \
+	assert(barget(&bar, 23) != oz); \
+	assert(barget(&bar, 24) != oz); \
+	assert(barget(&bar, 31) != oz); \
+}
+
+int
+test_barswap()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2, bar3;
+	int i;
+	uint_t b;
+	int tlen = 176;
+	int rv;
+	uint32_t tw = 0xFFAA5500;
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+	bzero(&bar3, sizeof(bar_t));
+
+	/* usual degenerate case */
+	rv = barswap(&bar2, &bar1);
+	assert(rv == 0);
+	assert(barlen(&bar1) == 0);
+	assert(barlen(&bar2) == 0);
+
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+
+	/* create a distinct pattern. For now, just 32 bits. */
+	for (i = 0; i < tlen; i++) {
+		b = (tw >> (i %32)) & 0x1Ul;
+		barset(&bar1, b);
+	}
+	assert(barlen(&bar1) == tlen);
+	TBO(bar1, 1);
+	rv = barswap(&bar2, &bar1);
+	assert(rv == tlen);
+	assert(barlen(&bar2) == tlen);
+	assert(barlen(&bar2) == barlen(&bar1));
+	TBO(bar2, 0);
+	rv = barswap(&bar3, &bar2);
+	assert(rv == tlen);
+	assert(barlen(&bar3) == tlen);
+	assert(barlen(&bar2) == barlen(&bar3));
+	TBO(bar3, 1);
+	rv = barcmp(&bar1, &bar3);
+	assert(rv == 0);
+
+	return 0;
+}
+
 /*
  * later on we'll add some verbiage and maybe debug stuff.
  */
@@ -1610,6 +1670,14 @@ main(int argc, char **argv)
 		return rv;
 	}
 	vprintf(VVERB, "barfns_fnz test passed\n");
+
+	vprintf(VVERB, "test barswap\n");
+	rv = test_barswap();
+	if (rv != 0) {
+		vprintf(VERR, "barswap test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barswap test passed\n");
 
 	vprintf(VVERB, "test program complete.\n");
 	return 0;

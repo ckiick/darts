@@ -51,6 +51,7 @@ int barfns(bar_t *bar, uint_t bit_index);
 int barfnz(bar_t *bar, uint_t bit_index);
 #define barffz(b)	barfnz(b, 0);
 uint_t barpopc(bar_t *bar);
+int barswap(bar_t *dest, bar_t *src);
 
 /* missing features? */
 /*
@@ -60,7 +61,6 @@ uint_t barpopc(bar_t *bar);
 #ifdef NOTYET
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
-int barcvt(bar_t *dest, bar_t *src);
 
 #endif
 #endif /* __BAR_H */

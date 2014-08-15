@@ -13,6 +13,27 @@
 #define MIN(a, b)  (((a) <= (b)) ? (a) : (b))
 #define MAX(a, b)  (((a) >= (b)) ? (a) : (b)) 
 
+/* one of the few places where we care about word size. 
+ * because the bswap builtins are defined by number of bits, 
+ * not the type. It would be nice if they were consistent.
+ * So we make our own bswapl.
+ */
+#if defined(__SIZEOF_LONG__)
+         #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#if __SIZEOF_LONG__ == 4
+#define bswapl	__builtin_bswap32
+#else	/* must be 64 bit */
+#define bswapl	__builtin_bswap64
+#endif
+#else	/* no sizeof long. try something more common. */
+#ifdef __LP64__
+#define bswapl	__builtin_bswap64
+#else	/* ! __LP64__ */
+#define bswapl	__builtin_bswap32
+#endif	/* __LP64__ */
+#endif	/* sizeof long */
+
+/* debug macro. optimizes out when DEBUG is not defined. */
 #ifdef DEBUG
 #define DBG(pargs) 		\
 	if (printf("%s:",__func__) + printf pargs)
@@ -21,6 +42,7 @@
 	if (0)
 #endif /* non-DEBUG */
 
+/* an empty bar_t. */
 const bar_t nobar = {
 	0, 0, 0, NULL
 };
@@ -103,7 +125,7 @@ uint_t barlen(bar_t *bar)
 	return bar->numbits;
 }
 
-uint_t barcpy(bar_t *dest, bar_t *src)
+int barcpy(bar_t *dest, bar_t *src)
 {
 	if (src->numbits != dest->numbits) {
 		if (barsize(dest, src->numbits) == NULL) {
@@ -500,7 +522,7 @@ uint_t barprint(bar_t *bar, char *str, int base)
 	return i;
 }
 
-#define C2V(c)  ((c <= '9') ? (c - '0') : (c - 'A' + 10))
+#define C2V(c)  ((c <= '9') ? (c - '0') : ((c&0xDF) - 'A' + 10))
 static int _str2w(char *str, word_t *w, uint_t bits, uint_t logbase)
 {
 	int i = 0, j = 0;
@@ -688,14 +710,24 @@ uint_t barpopc(bar_t *bar)
 	return count;
 }
 
+int barswap(bar_t *dest, bar_t *src)
+{
+	uint_t ndx;
+	if (src->numbits != dest->numbits) {
+		if (barsize(dest, src->numbits) == NULL) {
+			return -1;
+		}
+	}
+	for (ndx = 0; ndx < dest->usedwords; ndx++) {
+		dest->words[ndx] = bswapl(src->words[ndx]);
+	}
+	return dest->numbits;
+}
+
 /* save the rest for later. we've made enough bugs for now. */
 #ifdef NOTDEF
-
-need to add: barnull, nobar.
 DEBUG stuff:
 	barcheck
-
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
-void barcvt(bar_t *dest, bar_t *src);
 #endif

@@ -230,7 +230,7 @@ Sets the the size of bar to the size in bits of an unsigned long and
 copies the bits of word into bar.  Returns size of bar. On failure
 returns <0 and errno may be set.
 
-	int barcvt(bar_t *dest, bar_t *src);
+	int barswap(bar_t *dest, bar_t *src);
 Copies src to dest, but each word of dest has it's bytes swapped from src.
 In other words, changes the byte order (endianness) from src to dest.
 Returns the number of bits copied. On error returns < 0 and errno may
