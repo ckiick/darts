@@ -1097,9 +1097,6 @@ test_barprint_scan()
 	int rv;
 	char str1[tlen+4];
 	char str2[tlen+4];
-	char str3[tlen+4];
-	char str4[tlen+4];
-	char str5[tlen+4];
 
 	bzero(&bar1, sizeof(bar_t));
 	bzero(&bar2, sizeof(bar_t));
@@ -1175,33 +1172,305 @@ test_barprint_scan()
 	assert(rv == 0);
 	rv = barprint(&bar1, str2, 16);
 	assert(rv == (tlen+3)/4);
+	assert(str2[0] == '7');
 
 	rv = barprint(&bar2, str2, 2);
 	assert(rv == tlen+1);
 	assert(! strncmp(str1, str2, tlen+1));
 	rv = barprint(&bar2, str2, 16);
 	assert(rv == (tlen+4)/4);
+	assert(str2[0] == 'F');
 
 	rv = barprint(&bar3, str2, 2);
 	assert(rv == tlen+2);
 	assert(! strncmp(str1, str2, tlen+2));
 	rv = barprint(&bar3, str2, 16);
 	assert(rv == (tlen+5)/4);
+	assert(str2[0] == '1');
 
 	/* now scan */
 	rv = barprint(&bar1, str1, 2);
 	assert(rv == barlen(&bar1));
-	rv = barscan(&bar2, str2, 2);
+	rv = barscan(&bar2, str1, 2);
+
 	assert(rv == barlen(&bar1));
 	assert(barcmp(&bar1, &bar2) == 0);
 	rv = barprint(&bar1, str1, 16);
-	rv = barscan(&bar2, str2, 16);
+	rv = barscan(&bar2, str1, 16);
 	assert(barcmp(&bar1, &bar2) == 0);
-	rv = barscan(&bar3, "",2);
-	assert(rv == 1);
-	assert(barlen(&bar3) == 1);
+
+	rv = barscan(&bar3, "", 2);
+	assert(rv == 0);
+	assert(barlen(&bar3) == 0);
 	rv = barscan(&bar3, NULL, 16);
 	assert(rv == 0);
+	return 0;
+}
+
+int
+test_bar2ul2bar()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2, bar3;
+	unsigned long rw;
+	uint_t tlen  = 512;
+	int rv;
+	unsigned long tw1, tw2;
+	int i;
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+	bzero(&bar3, sizeof(bar_t));
+
+	/* null case */
+	rw = bar2ul(&bar1);
+	assert(rw == 0);
+
+	/* output  */
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+	rw = bar2ul(&bar1);
+	assert(rw == 0);
+	rv = barset(&bar1, 0);
+	assert(rv == 0);
+	rw = bar2ul(&bar1);
+	assert(rw == 1);
+	barfill(&bar1, 1);
+	rw = bar2ul(&bar1);
+	assert(rw == ~0UL);
+	rv = barclr(&bar1, 0);
+	assert(rv == 1);
+	rw = bar2ul(&bar1);
+	assert(rw == ((~0UL) - 1));
+
+	/* test the input */
+	assert(barlen(&bar2) == 0);
+	tw1 = 0;
+	rv = ul2bar(&bar2, tw1);
+	assert(rv == sizeof(unsigned long) * 8);
+	assert(barlen(&bar2) == sizeof(unsigned long) * 8);
+	for (i = 0; i < sizeof(unsigned long) * 8; i++) {
+		rv = barget(&bar2, i);
+		assert(rv == 0);
+	}
+	tw1 = ~0UL;
+	rv = ul2bar(&bar2, tw1);
+	assert(rv == sizeof(unsigned long) * 8);
+	assert(barlen(&bar2) == sizeof(unsigned long) * 8);
+	for (i = 0; i < sizeof(unsigned long) * 8; i++) {
+		rv = barget(&bar2, i);
+		assert(rv == 1);
+	}
+	tw1--;
+	rv = ul2bar(&bar2, tw1);
+	assert(rv == sizeof(unsigned long) * 8);
+	assert(barlen(&bar2) == sizeof(unsigned long) * 8);
+	rv = barget(&bar2, 0);
+	assert(rv == 0);
+	rv = barget(&bar2, 1);
+	assert(rv == 1);
+
+	tw1 = 1UL;
+	rv = ul2bar(&bar2, tw1);
+	assert(rv == sizeof(unsigned long) * 8);
+	assert(barlen(&bar2) == sizeof(unsigned long) * 8);
+	rv = barget(&bar2, 0);
+	assert(rv == 1);
+	rv = barget(&bar2, 1);
+	assert(rv == 0);
+
+	/* i/o inverse. */
+	tw1 = 47;
+	for (i = 0; i < 113; i ++) {
+		rv = ul2bar(&bar3, tw1);
+		assert(rv == sizeof(unsigned long) * 8);
+		assert(barlen(&bar3) == sizeof(unsigned long) * 8);
+		tw2 = bar2ul(&bar3);
+		assert(tw2 == tw1);
+		tw1 *= tw1;
+	}
+	return 0;
+}
+
+/* ffs and ffz are not explicitly tested since they are macros for
+ * fns and fnz with 0 as the 2nd argument.
+ */
+int
+test_barfns_fnz()
+{
+	bar_t bar1, bar2, bar3;
+	int i, j, k;
+	int rv;
+	uint_t tlen = 66;
+	uint_t testlens[] = { 2, 7, 8, 9, 31, 32, 33,
+			 63, 64, 65, 255, 256, 257, 511, 512, 513,
+			UINT_MAX}; 
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+	bzero(&bar3, sizeof(bar_t));
+
+	/* try null cases first */
+	rv = barfns(&bar1, 0);
+	assert(rv == -1);
+	rv = barfns(&bar1, 1);
+	assert(rv == -1);
+	rv = barfns(&bar1, 157);
+	assert(rv == -1);
+
+	/* all zeros */
+	rv = barclr(&bar1, tlen - 1);
+	assert(rv == 0);
+	assert(barlen(&bar1) == tlen);
+	for (i = 0; i < tlen; i++) {
+		rv = barfns(&bar1, i);
+		assert(rv == -1);
+	}
+	rv = barfns(&bar1, tlen);
+	assert(rv == -1);
+	rv = barfns(&bar1, tlen+1);
+	assert(rv == -1);
+
+	/* test various sizes (edge cases) */
+	for (i = 0; testlens[i] < UINT_MAX; i++) {
+		rv = barclr(&bar2, testlens[i] - 1);
+		assert(rv == 0);
+		assert(barlen(&bar2) >= testlens[i]);
+		if (testlens[i] <= 100) {
+			for (j = 0; j < testlens[i]; j++) {
+				rv = barfns(&bar2, j);
+				assert(rv == -1);
+			}
+		} else {
+			rv = barfns(&bar2, 0);
+			assert(rv == -1);
+			rv = barfns(&bar2, 1);
+			assert(rv == -1);
+			rv = barfns(&bar2, testlens[i]/2);
+			assert(rv == -1);
+			rv = barfns(&bar2, testlens[i]-2);
+			assert(rv == -1);
+			rv = barfns(&bar2, testlens[i]-1);
+			assert(rv == -1);
+		}
+	}
+
+	tlen=513;
+	/* can't test everything, so pick a couple. */
+	rv = barclr(&bar3, tlen);
+	assert(rv == 0);
+	assert(barlen(&bar3) == tlen+1);
+	barzero(&bar3);
+	for (j = 0; j < 70; j++) {
+		rv = barset(&bar3, j);
+		assert(rv == 0);
+		if (j >= 2) {
+			rv = barclr(&bar3, j-2);
+			assert(rv == 1);
+			for (k = 0; k < j - 2; k++) {
+				rv = barfns(&bar3, k);
+				assert(rv == j - 1);
+			}
+		}
+	}
+	barzero(&bar3);
+	for (j = tlen-70; j < tlen; j++) {
+		rv = barset(&bar3, j);
+		assert(rv == 0);
+		if (j >= 2 + (tlen-70)) {
+			rv = barclr(&bar3, j-2);
+			assert(rv == 1);
+			for (k = 0; k < j - 2; k++) {
+				rv = barfns(&bar3, k);
+				assert(rv == j - 1);
+			}
+		}
+	}
+return 0;
+	/* Now do it all again for fnz. */
+	barnull(&bar1);
+	barnull(&bar2);
+	barnull(&bar3);
+
+	/* try null cases first */
+	rv = barfnz(&bar1, 0);
+	assert(rv == -1);
+	rv = barfnz(&bar1, 1);
+	assert(rv == -1);
+	rv = barfnz(&bar1, 157);
+	assert(rv == -1);
+
+	/* all ones */
+	rv = barset(&bar1, tlen);
+	assert(rv == 0);
+	assert(barlen(&bar1) == tlen);
+	barfill(&bar1, 1);
+	for (i = 0; i < tlen; i++) {
+		rv = barfnz(&bar1, i);
+		assert(rv == -1);
+	}
+	rv = barfnz(&bar1, tlen);
+	assert(rv == -1);
+	rv = barfnz(&bar1, tlen+1);
+	assert(rv == -1);
+
+	/* test various sizes (edge cases) */
+	for (i = 0; testlens[i] < UINT_MAX; i++) {
+		rv = barset(&bar2, testlens[i] - 1);
+		assert(rv == 0);
+		assert(barlen(&bar2) >= testlens[i]);
+		barfill(&bar2, 1);
+		if (testlens[i] <= 100) {
+			for (j = 0; j < testlens[i]; j++) {
+				rv = barfnz(&bar2, j);
+				assert(rv == -1);
+			}
+		} else {
+			rv = barfnz(&bar2, 0);
+			assert(rv == -1);
+			rv = barfnz(&bar2, 1);
+			assert(rv == -1);
+			rv = barfnz(&bar2, testlens[i]/2);
+			assert(rv == -1);
+			rv = barfnz(&bar2, testlens[i]-2);
+			assert(rv == -1);
+			rv = barfnz(&bar2, testlens[i]-1);
+			assert(rv == -1);
+		}
+	}
+
+	tlen=513;
+	/* can't test everything, so pick a couple. */
+	rv = barset(&bar3, tlen);
+	assert(rv == 0);
+	assert(barlen(&bar3) == tlen+1);
+	barfill(&bar3, 1);
+	for (j = 0; j < 70; j++) {
+		rv = barclr(&bar3, j);
+		assert(rv == 1);
+		if (j >= 2) {
+			rv = barset(&bar3, j-2);
+			assert(rv == 0);
+			for (k = 0; k < j - 2; k++) {
+				rv = barfnz(&bar3, k);
+				assert(rv == j - 1);
+			}
+		}
+	}
+	barfill(&bar3, 1);
+	for (j = tlen-70; j < tlen; j++){
+		rv = barclr(&bar3, j);
+		assert(rv == 1);
+		if (j >= 2 + (tlen-70)) {
+			rv = barset(&bar3, j-2);
+			assert(rv == 0);
+			for (k = 0; k < j - 2; k++) {
+				rv = barfnz(&bar3, k);
+				assert(rv == j - 1);
+			}
+		}
+	}
 	return 0;
 }
 
@@ -1325,6 +1594,22 @@ main(int argc, char **argv)
 		return rv;
 	}
 	vprintf(VVERB, "barprint_scan test passed\n");
+
+	vprintf(VVERB, "test bar2ul2bar\n");
+	rv = test_bar2ul2bar();
+	if (rv != 0) {
+		vprintf(VERR, "bar2ul2bar test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "bar2ul2bar test passed\n");
+
+	vprintf(VVERB, "test barfns_fnz\n");
+	rv = test_barfns_fnz();
+	if (rv != 0) {
+		vprintf(VERR, "barfns_fnz test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barfns_fnz test passed\n");
 
 	vprintf(VVERB, "test program complete.\n");
 	return 0;

@@ -461,13 +461,13 @@ static const char _digits[17] = "0123456789ABCDEF";
 static int _w2str(char *str, word_t w, uint_t bits, uint_t logbase)
 {
 	word_t mask = 0xfUL >> (4 - logbase);
-	int i = 0, j = 0;
+	int i = 0, j;
+	int digs;
 
 	if (bits == 0) bits = WORD_SIZE;
-	while (j < bits) {
-		str[i++] = _digits[w & mask];
-		w >>= logbase;
-		j += logbase;
+	digs = (bits+logbase-1) / logbase;
+	for (j = digs; j > 0; j--) {
+		str[i++] = _digits[(w >> ((j-1)*logbase)) & mask];
 	}
 	str[i] = '\0';
 	return i;
@@ -493,12 +493,8 @@ uint_t barprint(bar_t *bar, char *str, int base)
 		return 1;
 	}
 	end = bar->numbits % WORD_SIZE;
-	ndx = bar->usedwords;
-	if (end) {
-		i += _w2str(str, bar->words[ndx-1], end, logbase);
-		ndx--;	
-	}
-	for ( ; ndx > 0; ndx--) {
+	i += _w2str(&(str[i]), bar->words[bar->usedwords-1], end, logbase);
+	for (ndx =  bar->usedwords-1; ndx > 0; ndx--) {
 		i += _w2str( &(str[i]), bar->words[ndx-1], WORD_SIZE, logbase);
 	}
 	return i;
@@ -537,27 +533,160 @@ uint_t barscan(bar_t *bar, char *str, int base)
 	}
 	digits[base] = '\0';
 	len = strspn(str, digits);
-	if (len == 0) return 0;
-	if (len * logbase >= bar->numbits) {
+	if (len * logbase != bar->numbits) {
 		if (barsize(bar, len * logbase) == NULL) {
 			return 0;
 		}
 	}
+	if (len == 0) return 0;
 
+	ndx = bar->usedwords;
 	end = bar->numbits % WORD_SIZE;
-	ndx = bar->usedwords - 1;
-	if (end) {
-		len -= end / logbase;
-		i += _str2w(&(str[len]), &(bar->words[ndx]), end, logbase);
-		ndx--;	
-	}
-	for ( ; ndx >= 0; ndx--) {
+	i += _str2w(&(str[i]), &(bar->words[ndx-1]), end, logbase);
+	for (--ndx; ndx > 0; ndx--) {
 		len -= WORD_SIZE / logbase;
-		_str2w(&(str[len]), &(bar->words[ndx]), WORD_SIZE, logbase);
+		i+= _str2w(&(str[i]), &(bar->words[ndx-1]), WORD_SIZE, logbase);
 	}
+	str[i] = '\0';
 	return bar->numbits;
 }
 
+unsigned long bar2ul(bar_t *bar)
+{
+	if (bar == NULL) return 0;
+	if (bar->usedwords == 0) return 0;
+	return (bar->words[0]);
+}
+
+int ul2bar(bar_t *bar, unsigned long word)
+{
+	if (bar->numbits != WORD_SIZE) {
+		if (barsize(bar, WORD_SIZE) == NULL) {
+			return -1;
+		}
+	}
+	bar->words[0] = word;
+	return WORD_SIZE;
+}
+
+int barfns(bar_t *bar, uint_t bit_index)
+{
+	uint_t ndx;
+	int fb;
+	int shift;
+
+	if (bar->numbits == 0) {
+		return -1;
+	}
+	if (bit_index >= bar->numbits) {
+		return -1;
+	}
+	/* three sections, any of which may be missing.
+	 * partial word at beginning, full words in middle, partial
+	 * word at end.
+	 */
+	ndx = bit_index / WORD_SIZE;
+	shift = (bit_index % WORD_SIZE);
+	if (shift) {
+		fb = __builtin_ffsl(bar->words[ndx] >> shift);
+		if (fb != 0) {
+			return bit_index + (fb - 1);
+		}
+		ndx++;
+	}
+	if (ndx >= bar->usedwords) return -1;
+	/* full words */
+	for ( ; ndx < bar->usedwords - 1; ndx++) {
+		if (bar->words[ndx] != 0UL) {
+			fb = __builtin_ffsl(bar->words[ndx]);
+			return (fb - 1) + (ndx * WORD_SIZE);
+		}
+	}
+	/* last word. may or may not be partial */
+	shift = (bar->numbits % WORD_SIZE);
+	if (shift) shift = WORD_SIZE - shift;
+	fb = __builtin_ffsl(bar->words[ndx] << shift);
+	if (fb != 0) {
+		return (fb - shift) -1 + ndx * WORD_SIZE;
+	}
+	return -1;
+}
+
+int barfnz(bar_t *bar, uint_t bit_index)
+{
+	uint_t ndx;
+	int fb;
+	int shift;
+
+	if (bar->numbits == 0) {
+		return -1;
+	}
+	if (bit_index >= bar->numbits) {
+		return -1;
+	}
+	/* three sections, any of which may be missing.
+	 * partial word at beginning, full words in middle, partial
+	 * word at end.
+	 */
+	ndx = bit_index / WORD_SIZE;
+	shift = (bit_index % WORD_SIZE);
+	if (shift) {
+		fb = __builtin_ffsl( ~(bar->words[ndx] >> shift));
+		if (fb != 0) {
+			return bit_index + (fb - 1);
+		}
+		ndx++;
+	}
+	if (ndx >= bar->usedwords) return -1;
+	/* full words */
+	for ( ; ndx < bar->usedwords - 1; ndx ++) {
+		if (bar->words[ndx] != 0UL) {
+			fb = __builtin_ffsl(~(bar->words[ndx]));
+			return (fb - 1) + (ndx * WORD_SIZE);
+		}
+	}
+	/* last word. may or may not be partial */
+	shift = (bar->numbits % WORD_SIZE);
+	if (shift) shift = WORD_SIZE - shift;
+	fb = __builtin_ffsl(~(bar->words[ndx] << shift));
+	if (fb != 0) {
+		return (fb - shift) -1 + ndx * WORD_SIZE;
+	}
+	return -1;
+}
+
+uint_t barpopc(bar_t *bar)
+{
+	uint_t ndx;
+	int count = 0;
+	int shift;
+
+	if (bar->numbits == 0) {
+		return 0;
+	}
+
+	/* three sections, any of which may be missing.
+	 * partial word at beginning, full words in middle, partial
+	 * word at end.
+	 */
+	ndx = bit_index / WORD_SIZE;
+	shift = (bit_index % WORD_SIZE);
+	if (shift) {
+		count += __builtin_popcountl(bar->words[ndx] >> shift);
+		ndx++;
+	}
+	if (ndx >= bar->usedwords) return count;
+	/* full words */
+	for ( ; ndx < bar->usedwords - 1; ndx ++) {
+		count += __builtin_popcountl(bar->words[ndx]);
+	}
+	/* last word. may or may not be partial */
+	shift = (bar->numbits % WORD_SIZE);
+	if (shift) shift = WORD_SIZE - shift;
+	count += __builtin_popcountl(bar->words[ndx] << shift);
+
+	return count;
+}
 
 /* save the rest for later. we've made enough bugs for now. */
 #ifdef NOTDEF
@@ -568,12 +697,5 @@ DEBUG stuff:
 
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
-unsigned long bar2long(bar_t *bar);
-void long2bar(bar_t *bar, unsigned long word);
 void barcvt(bar_t *dest, bar_t *src);
-uint_t barpopc(bar_t *bar);
-int barffs(bar_t *bar);
-int barfns(bar_t *bar, uint_t bit_index);
-int barffz(bar_t *bar);
-int barfnz(bar_t *bar, uint_t bit_index);
 #endif

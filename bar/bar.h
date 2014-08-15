@@ -44,6 +44,13 @@ int barlsle(bar_t *dest, bar_t *src, uint_t dist);
 int barcmp(bar_t *bar1, bar_t *bar2);
 uint_t barprint(bar_t *bar, char *str, int base);
 uint_t barscan(bar_t *bar, char *str, int base);
+unsigned long bar2ul(bar_t *bar);
+int ul2bar(bar_t *bar, unsigned long word);
+int barfns(bar_t *bar, uint_t bit_index);
+#define barffs(b)	barfns(b, 0);
+int barfnz(bar_t *bar, uint_t bit_index);
+#define barffz(b)	barfnz(b, 0);
+uint_t barpopc(bar_t *bar);
 
 /* missing features? */
 /*
@@ -53,13 +60,7 @@ uint_t barscan(bar_t *bar, char *str, int base);
 #ifdef NOTYET
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
-unsigned long bar2long(bar_t *bar);
-void long2bar(bar_t *bar, unsigned long word);
-void barcvt(bar_t *dest, bar_t *src);
-uint_t barpopc(bar_t *bar);
-int barffs(bar_t *bar);
-int barfns(bar_t *bar, uint_t bit_index);
-int barffz(bar_t *bar);
-int barfnz(bar_t *bar, uint_t bit_index);
+int barcvt(bar_t *dest, bar_t *src);
+
 #endif
 #endif /* __BAR_H */
