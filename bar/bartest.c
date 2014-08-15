@@ -8,12 +8,10 @@
 #include <assert.h>
 #include <strings.h>
 #include <inttypes.h>
-
+#include <string.h>
 /*
 	TODO:
 test_bardup
-test_barcpy
-test_barcmp
 test_barprint
 test_barscan 
 CLI options processing
@@ -44,7 +42,7 @@ more specific test cases (overlap, d=s, word and capacity boundaries.
 #define VNOISY	4
 #define VDUMP	5
 
-int verbose = VDEBUG;
+int verbose = VERR;
 
 /* some basic stuff. */
 int
@@ -967,7 +965,7 @@ test_barshift()
 	barzero(&bar3);
 	assert(barlen(&bar3) == tlen);
 	rv = barset(&bar1, 0);
-	assert(rv == 0);
+	assert(rv == 1);
 	assert(barget(&bar1, 0) == 1);
 
 	rv = barlsr(&bar3, &bar1, tlen+1);
@@ -990,17 +988,6 @@ test_barshift()
 		rv = barlsl(&bar2, &bar1, j);
 		assert(rv == barlen(&bar1));
 		assert(barlen(&bar2) == barlen(&bar1));
-		for (i = 0; i < tlen - j; i++) {
-			b = barget(&bar2, i);
-			assert(b == 1);
-		}
-		for (i = tlen - j; i < tlen; i++) {
-			b = barget(&bar2, i);
-			assert(b == 0);
-		}
-		rv = barlsr(&bar3, &bar2, j);
-		assert(rv == barlen(&bar2));
-		assert(barlen(&bar2) == barlen(&bar3));
 		for (i = 0; i < j; i++) {
 			b = barget(&bar2, i);
 			assert(b == 0);
@@ -1008,6 +995,17 @@ test_barshift()
 		for (i = j; i < tlen; i++) {
 			b = barget(&bar2, i);
 			assert(b == 1);
+		}
+		rv = barlsr(&bar3, &bar2, j);
+		assert(rv == barlen(&bar2));
+		assert(barlen(&bar2) == barlen(&bar3));
+		for (i = 0; i < tlen-j; i++) {
+			b = barget(&bar3, i);
+			assert(b == 1);
+		}
+		for (i = tlen-j; i < tlen; i++) {
+			b = barget(&bar3, i);
+			assert(b == 0);
 		}
 	}
 	/* test lse, and double use */
@@ -1019,13 +1017,14 @@ test_barshift()
 		assert(rv == j);
 		assert(barlen(&bar1) == j);
 		rv = barget(&bar1, 0);
-		for (k = 0; k < tlen; k++) {
-			rv = barget(&bar1, j - k);
-			assert(rv == 1);
-		}
+		assert((i==0) || (rv == 0));
 		for (k = 0; k < j - tlen; k++) {
-			rv = barget(&bar1, j - k);
-			assert(rv == 0);
+			rv = barget(&bar1, k);
+			assert((i==0) || (rv == 0));
+		}
+		for (k = j-tlen; k < j; k++) {
+			rv = barget(&bar1,k);
+			assert(rv == 1);
 		}
 	}
 
@@ -1036,6 +1035,173 @@ test_barshift()
 	barnull(&bar3);
 	assert(barlen(&bar3) == 0);
 
+	return 0;
+}
+
+int
+test_barcmp_cpy()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2, bar3;
+	int tlen = 169;
+	int rv;
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+	bzero(&bar3, sizeof(bar_t));
+
+	/* null case */
+	rv = barcmp(&bar1, &bar2);
+	assert(rv == 0);
+
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+
+	rv = barcmp(&bar1, &bar2);
+	assert(rv == 0);
+
+	rv = barcpy(&bar2, &bar1);
+	assert(rv = tlen);
+	assert(barlen(&bar1) == barlen(&bar2));
+	rv = barcmp(&bar1, &bar2);
+	assert(rv == 0);
+	barfill(&bar1, 1);
+	rv = barcmp(&bar1, &bar2);
+	assert(rv == 1);
+	rv = barcmp(&bar2, &bar1);
+	assert(rv == -1);
+	rv = barcpy(&bar2, &bar1);
+	assert(rv == tlen);
+	rv = barcmp(&bar1, &bar2);
+	assert(rv == 0);
+	rv = barcmp(&bar3, &bar1);
+	assert(rv == -1);
+	rv = barcmp(&bar2, &bar3);
+	assert(rv == 1);
+	rv = barclr(&bar2, tlen/2);
+	assert(rv == 1);
+	rv = barcmp(&bar1, &bar2);
+	assert(rv == 1);
+	return 0;
+}
+
+
+/* note: base 8 not supported. */
+int
+test_barprint_scan()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2, bar3;
+	int tlen = 127;
+	int rv;
+	char str1[tlen+4];
+	char str2[tlen+4];
+	char str3[tlen+4];
+	char str4[tlen+4];
+	char str5[tlen+4];
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+	bzero(&bar3, sizeof(bar_t));
+
+	/* null case. of course */
+	rv = barprint(&bar1, str1, 2);
+	assert(rv == 1);
+	assert(!strcmp(str1, "0"));
+	rv = barprint(&bar1, str1, 8);
+	assert(rv == 0);
+	assert(!strcmp(str1, "0"));
+	rv = barprint(&bar1, str1, 16);
+	assert(rv == 1);
+	assert(!strcmp(str1, "0"));
+	rv = barprint(&bar1, str1, 57);
+	assert(rv == 0);
+
+	/* here we go */
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+	barp1 = barsize(&bar2, tlen+1);
+	assert(barp1 != NULL);
+	assert(barlen(&bar2) == tlen+1);
+	barp1 = barsize(&bar3, tlen+2);
+	assert(barp1 != NULL);
+	assert(barlen(&bar3) == tlen+2);
+
+	/* zeros */
+
+	memset(str1, '0', tlen+3);
+	str1[tlen+3] = '\0';
+
+	rv = barprint(&bar1, str2, 2);
+	assert(rv == tlen);
+	assert(! strncmp(str1, str2, tlen));
+	rv = barprint(&bar1, str2, 8);
+	assert(rv == 0);
+	rv = barprint(&bar1, str2, 16);
+	assert(rv == (tlen+3)/4);
+	assert(! strncmp(str1, str2, (tlen+3)/4));
+
+	rv = barprint(&bar2, str2, 2);
+	assert(rv == tlen+1);
+	assert(! strncmp(str1, str2, tlen+1));
+	rv = barprint(&bar2, str2, 8);
+	assert(rv == 0);
+	rv = barprint(&bar2, str2, 16);
+	assert(rv == (tlen+4)/4);
+	assert(! strncmp(str1, str2, (tlen+4)/4));
+
+	rv = barprint(&bar3, str2, 2);
+	assert(rv == tlen+2);
+	assert(! strncmp(str1, str2, tlen+2));
+	rv = barprint(&bar3, str2, 8);
+	assert(rv == 0);
+	rv = barprint(&bar3, str2, 16);
+	assert(rv == (tlen+5)/4);
+	assert(! strncmp(str1, str2, (tlen+5)/4));
+
+	/* ones */
+	memset(str1, '1', tlen+3);
+	str1[tlen+3] = '\0';
+	barfill(&bar1, 1);
+	barfill(&bar2, 1);
+	barfill(&bar3, 1);
+
+	rv = barprint(&bar1, str2, 2);
+	assert(rv == tlen);
+	assert(! strncmp(str1, str2, tlen));
+	rv = barprint(&bar1, str2, 8);
+	assert(rv == 0);
+	rv = barprint(&bar1, str2, 16);
+	assert(rv == (tlen+3)/4);
+
+	rv = barprint(&bar2, str2, 2);
+	assert(rv == tlen+1);
+	assert(! strncmp(str1, str2, tlen+1));
+	rv = barprint(&bar2, str2, 16);
+	assert(rv == (tlen+4)/4);
+
+	rv = barprint(&bar3, str2, 2);
+	assert(rv == tlen+2);
+	assert(! strncmp(str1, str2, tlen+2));
+	rv = barprint(&bar3, str2, 16);
+	assert(rv == (tlen+5)/4);
+
+	/* now scan */
+	rv = barprint(&bar1, str1, 2);
+	assert(rv == barlen(&bar1));
+	rv = barscan(&bar2, str2, 2);
+	assert(rv == barlen(&bar1));
+	assert(barcmp(&bar1, &bar2) == 0);
+	rv = barprint(&bar1, str1, 16);
+	rv = barscan(&bar2, str2, 16);
+	assert(barcmp(&bar1, &bar2) == 0);
+	rv = barscan(&bar3, "",2);
+	assert(rv == 1);
+	assert(barlen(&bar3) == 1);
+	rv = barscan(&bar3, NULL, 16);
+	assert(rv == 0);
 	return 0;
 }
 
@@ -1143,6 +1309,22 @@ main(int argc, char **argv)
 		return rv;
 	}
 	vprintf(VVERB, "barshift test passed\n");
+
+	vprintf(VVERB, "test barcmp_cpy\n");
+	rv = test_barcmp_cpy();
+	if (rv != 0) {
+		vprintf(VERR, "barcmp_cpy test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barcmp_cpy test passed\n");
+
+	vprintf(VVERB, "test barprint_scan\n");
+	rv = test_barprint_scan();
+	if (rv != 0) {
+		vprintf(VERR, "barprint_scan test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barprint_scan test passed\n");
 
 	vprintf(VVERB, "test program complete.\n");
 	return 0;

@@ -296,6 +296,8 @@ int barxor(bar_t *dest, bar_t *src1, bar_t *src2)
 int barlsr(bar_t *dest, bar_t *src, uint_t dist)
 {
 	uint_t used, ndx, shift;
+	uint_t offset;
+	int mark;		/* must be signed. */
 
 	if (src->numbits != dest->numbits) {
 		if (barsize(dest, src->numbits) == NULL) {
@@ -311,26 +313,32 @@ int barlsr(bar_t *dest, bar_t *src, uint_t dist)
 	}
 	shift = dist % WORD_SIZE;
 	used = B2W(dist);
+	offset = dist / WORD_SIZE;
+
 	if (shift == 0) {
 		memmove(&(dest->words[0]), &(src->words[used]), (dest->usedwords - used) * sizeof(word_t));
-		if (used > 0) {
-			memset(&(dest->words[dest->usedwords-used]), 0, (dest->usedwords-used) * sizeof(word_t));
-		}
+		memset(&(dest->words[dest->usedwords-used]), 0, used * sizeof(word_t));
 		return dest->numbits;
 	}
-
-	for (ndx = 0 ; ndx < (dest->usedwords-1) - used; ndx++) {
-		dest->words[ndx] = (src->words[ndx + used] >> shift) | (src->words[ndx+used+1] << (WORD_SIZE - shift));
+	for (ndx = 0 ; ndx < dest->usedwords; ndx++) {
+			mark = ndx + offset;
+			if (mark >= dest->usedwords) {
+				dest->words[ndx] = 0UL;
+			} else if (mark == dest->usedwords - 1) {
+				dest->words[ndx] = src->words[mark] >> shift;
+			} else {
+				dest->words[ndx] = src->words[mark] >> shift |
+				    src->words[mark+1] << (WORD_SIZE - shift);
+			}
 	}
-	dest->words[ndx] = src->words[ndx+used] >> shift;
-	memset(&(dest->words[ndx+1]), 0, used * sizeof(word_t));
 	return dest->numbits;
 }
 
-/* if dist=0, this is copy. If src is 0, just resize */
 int barlsl(bar_t *dest, bar_t *src, uint_t dist)
 {
-	uint_t used, ndx, shift;
+	uint_t used, shift;
+	uint_t offset, rem;
+	int ndx, mark;		/* must be signed. */
 
 	if (src->numbits != dest->numbits) {
 		if (barsize(dest, src->numbits) == NULL) {
@@ -346,33 +354,41 @@ int barlsl(bar_t *dest, bar_t *src, uint_t dist)
 	}
 	shift = dist % WORD_SIZE;
 	used = B2W(dist);
+	offset = dist / WORD_SIZE;
+
 	if (shift == 0) {
 		memmove(&(dest->words[used]), &(src->words[0]), (dest->usedwords - used) * sizeof(word_t));
-		if (used > 0) {
-			memset(&(dest->words[0]), 0, used * sizeof(word_t));
+		memset(&(dest->words[0]), 0, used * sizeof(word_t));
+	} else {
+		for (ndx = dest->usedwords - 1; ndx >=0; ndx--) {
+			mark = ndx - offset;
+			if (mark < 0) {
+				dest->words[ndx] = 0UL;
+			} else if (mark == 0) {
+				dest->words[ndx] = src->words[mark] << shift;
+			} else {
+				dest->words[ndx] = src->words[mark] << shift |
+				    src->words[mark-1] >> (WORD_SIZE - shift);
+			}
 		}
-		return dest->numbits;
 	}
-
-	for (ndx = dest->usedwords-1; ndx > (dest->usedwords-1)-used) ; ndx--) {
-		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[(ndx-used)-1] >> (WORD_SIZE - shift));
+	/* trim */
+	rem = dest->numbits % WORD_SIZE;
+	if (rem) {
+		dest->words[dest->usedwords-1] <<= (WORD_SIZE - rem);
+		dest->words[dest->usedwords-1] >>= (WORD_SIZE - rem);
 	}
-	dest->words[ndx] = src->words[0] << shift;
-	if (used > 0) {
-		memset(&(dest->words[0]), 0, (used-1) * sizeof(word_t));
-	}
-	/* chop top */
-	dest->words[dest->usedwords-1] <<= (WORD_SIZE - shift);
-	dest->words[dest->usedwords-1] >>= (WORD_SIZE - shift);
 	return dest->numbits;
 }
 
 int barlsle(bar_t *dest, bar_t *src, uint_t dist)
 {
-	uint_t used, ndx, shift;
+	uint_t used, shift;
+	uint_t offset, rem;
+	int ndx, mark;		/* must be signed. */
 
-	if (dest->numbits != src->numbits + dist) {
-		if (barsize(dest, src->numbits + dist) == NULL) {
+	if (src->numbits + dist != dest->numbits) {
+		if (barsize(dest, src->numbits+dist) == NULL) {
 			return -1;
 		}
 	}
@@ -380,48 +396,61 @@ int barlsle(bar_t *dest, bar_t *src, uint_t dist)
 		return 0;
 	}
 	shift = dist % WORD_SIZE;
-	used = dist / WORD_SIZE;
-	if (shift == 0) {
-		memmove(&(dest->words[used]), &(src->words[0]), (dest->usedwords - used) * sizeof(word_t));
-		memset(&(dest->words[0]), 0, used * sizeof(word_t));
-		return dest->numbits;
-	}
+	used = B2W(dist);
+	offset = dist / WORD_SIZE;
 
-	for (ndx = dest->usedwords-1; ndx > dest->usedwords - used -1 ; ndx--) {
-		dest->words[ndx] = (src->words[ndx-used] << shift) | (src->words[ndx-used-1] << (WORD_SIZE - shift));
+	if (shift == 0) {
+		memmove(&(dest->words[used]), &(src->words[0]), src->usedwords * sizeof(word_t));
+	} else {
+		for (ndx = dest->usedwords - 1; ndx >=0; ndx--) {
+			mark = ndx - offset;
+			if (mark < 0) {
+				dest->words[ndx] = 0UL;
+			} else if (mark == 0) {
+				dest->words[ndx] = src->words[mark] << shift;
+			} else {
+				dest->words[ndx] = src->words[mark] << shift |
+				    src->words[mark-1] >> (WORD_SIZE - shift);
+			}
+		}
 	}
-	dest->words[ndx-1] = src->words[ndx+used-1] << shift;
-	memset(&(dest->words[0]), 0, used * sizeof(word_t));
+	/* trim */
+	rem = dest->numbits % WORD_SIZE;
+	if (rem) {
+		dest->words[dest->usedwords-1] <<= (WORD_SIZE - rem);
+		dest->words[dest->usedwords-1] >>= (WORD_SIZE - rem);
+	}
 	return dest->numbits;
 }
 
 // bar1 and bar2 do not have to be the same size.
 int barcmp(bar_t *bar1, bar_t *bar2)
 {
-	uint_t ndx;
+	uint_t ndx = bar1->usedwords;
 
 	if ((bar1->numbits == 0) && (bar2->numbits == 0)) {
 		return 0;
 	}
 
 	if (bar1->usedwords > bar2->usedwords) {
-		for (ndx = bar1->usedwords-1; ndx >= bar2->usedwords; ndx--) {
-			if (bar1->words[ndx]) {
+		for (ndx = bar1->usedwords; ndx > bar2->usedwords; ndx--) {
+			if (bar1->words[ndx-1]) {
 				return 1;
 			}
 		}
 	} else if (bar1->usedwords < bar2->usedwords) {
-		for (ndx = bar2->usedwords -1; ndx >= bar1->usedwords; ndx--) {
-			if (bar2->words[ndx]) {
+		for (ndx = bar2->usedwords; ndx > bar1->usedwords; ndx--) {
+			if (bar2->words[ndx-1]) {
 				return -1;
 			}
 		}
 	}
+//	ndx = MIN(bar1->usedwords, bar2->usedwords);
 	/* should be even now.*/
-	for (; ndx >= 0; ndx--) {
-		if (bar1->words[ndx] > bar2->words[ndx]) {
+	for (; ndx > 0; ndx--) {
+		if (bar1->words[ndx-1] > bar2->words[ndx-1]) {
 			return 1;
-		} else if (bar1->words[ndx] < bar2->words[ndx]) {
+		} else if (bar1->words[ndx-1] < bar2->words[ndx-1]) {
 			return -1;
 		}
 	}
@@ -451,22 +480,26 @@ uint_t barprint(bar_t *bar, char *str, int base)
 	if (str == NULL) return 0;
 	if (base == 2) {
 		logbase = 1;
-	} else if (base == 8) {
-		logbase = 3;
+//	} else if (base == 8) {
+//		logbase = 3;
 	} else if (base == 16) {
 		logbase = 4;
 	} else {
 		return 0;
 	}
 
+	if (bar->usedwords == 0) {
+		str[0]='0'; str[1] = '\0';
+		return 1;
+	}
 	end = bar->numbits % WORD_SIZE;
-	ndx = bar->usedwords - 1;
+	ndx = bar->usedwords;
 	if (end) {
-		i += _w2str(str, bar->words[ndx], end, logbase);
+		i += _w2str(str, bar->words[ndx-1], end, logbase);
 		ndx--;	
 	}
-	for ( ; ndx >= 0; ndx--) {
-		i += _w2str( &(str[i]), bar->words[ndx], WORD_SIZE, logbase);
+	for ( ; ndx > 0; ndx--) {
+		i += _w2str( &(str[i]), bar->words[ndx-1], WORD_SIZE, logbase);
 	}
 	return i;
 }
@@ -495,8 +528,8 @@ uint_t barscan(bar_t *bar, char *str, int base)
 	if (str == NULL) return 0;
 	if (base == 2) {
 		logbase = 1;
-	} else if (base == 8) {
-		logbase = 3;
+//	} else if (base == 8) {
+//		logbase = 3;
 	} else if (base == 16) {
 		logbase = 4;
 	} else {

@@ -46,10 +46,7 @@ uint_t barprint(bar_t *bar, char *str, int base);
 uint_t barscan(bar_t *bar, char *str, int base);
 
 /* missing features? */
-
 /*
-	barnull - set size to 0 and deallocate storage
-	nobar = constant empty bar.
 	DEBUG barcheck() - validation check on bar.
 */
 
