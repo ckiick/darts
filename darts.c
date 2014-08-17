@@ -22,8 +22,7 @@
  * -R string: use string to restart from checkpoint.
  */
 
-#define VER	"0.8.0"	// using  bit_array
-
+#define VER	"0.8.5"	// using  bar
 
 #ifdef __sparc
 #include <sys/types.h>
@@ -38,7 +37,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include "bar.h"
-#include "bit_array.h"
+
 #define DBG_INIT	0x00000001
 #define DBG_FILLIN	0x00000002
 #define DBG_MRF		0x00000004
@@ -81,7 +80,7 @@ char		*cpstr = NULL;
 int limits[6] = { 40, 40, 40, 30, 20, 10 };
 
 typedef struct _sc {
-	bar s;
+	bar_t s;
 //	uint8_t s[MAXVAL];
 	int gap;
 	int maxval;
@@ -189,7 +188,7 @@ DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d-1, r)) {
 			dumpscore(*scores);
 			printf("\n");
 }
-		bareshl( &(scores->s), val, 0);
+		barlsle(&(scores->s), &(scores->s), val);
 		baror(&(scores->s), &(dsc->s), &(scores->s));
 		scores->gap = dsc->gap;
 		scores->maxval = dsc->maxval + val;

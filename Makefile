@@ -2,4 +2,6 @@
 
 
 darts:	darts.c
-	gcc -O5 darts.c -o darts -I./BitArray -L ./BitArray -l bitarr
+	gcc -O5 darts.c ./bar/bar.c -o darts -I./bar
+
+
