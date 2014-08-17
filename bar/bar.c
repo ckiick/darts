@@ -1,17 +1,20 @@
 
 /* implementation of bit array (bar).  Vastly simplified from previous. */
 
-#include <stdlib.h>	/* realloc */
+#include <stdlib.h>	/* realloc, malloc */
 #include <string.h>	/* memset, memmove */
+#include <unistd.h>	/* syscalls */
 
 #include "bar.h"
 
 #define WORD_SIZE	(sizeof(word_t)*8)
 #define	INIT_CAP	8	/* initial capacity. */
+#define	MAX_BITS	(64*1024*1024)
 #define B2W(b)		(((b)+WORD_SIZE-1)/WORD_SIZE)
 #define POW2(n)		(1UL << (WORD_SIZE - __builtin_clzl(n)))
 #define MIN(a, b)  (((a) <= (b)) ? (a) : (b))
 #define MAX(a, b)  (((a) >= (b)) ? (a) : (b)) 
+
 
 /* one of the few places where we care about word size. 
  * because the bswap builtins are defined by number of bits, 
@@ -19,17 +22,20 @@
  * So we make our own bswapl.
  */
 #if defined(__SIZEOF_LONG__)
-         #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #if __SIZEOF_LONG__ == 4
+#define BAR_WS	2
 #define bswapl	__builtin_bswap32
-#else	/* must be 64 bit */
+#else	/* sizeof long==4 */
 #define bswapl	__builtin_bswap64
-#endif
+#define BAR_WS	3
+#endif	/* sizeof long==4 */
 #else	/* no sizeof long. try something more common. */
 #ifdef __LP64__
 #define bswapl	__builtin_bswap64
+#define BAR_WS	3
 #else	/* ! __LP64__ */
 #define bswapl	__builtin_bswap32
+#define BAR_WS	2
 #endif	/* __LP64__ */
 #endif	/* sizeof long */
 
@@ -687,19 +693,7 @@ uint_t barpopc(bar_t *bar)
 		return 0;
 	}
 
-	/* three sections, any of which may be missing.
-	 * partial word at beginning, full words in middle, partial
-	 * word at end.
-	 */
-	ndx = bit_index / WORD_SIZE;
-	shift = (bit_index % WORD_SIZE);
-	if (shift) {
-		count += __builtin_popcountl(bar->words[ndx] >> shift);
-		ndx++;
-	}
-	if (ndx >= bar->usedwords) return count;
-	/* full words */
-	for ( ; ndx < bar->usedwords - 1; ndx ++) {
+	for (ndx = 0; ndx < bar->usedwords - 1; ndx ++) {
 		count += __builtin_popcountl(bar->words[ndx]);
 	}
 	/* last word. may or may not be partial */
@@ -724,10 +718,261 @@ int barswap(bar_t *dest, bar_t *src)
 	return dest->numbits;
 }
 
+#ifdef DEBUG
+/* returns non-zero if there is something wrong with the bar. */
+int barcheck(bar_t *bar)
+{
+	int i, shift;
+	if (bar == NULL) return -1;
+	if (bar->words == NULL) {
+		if (bar->numbits || bar->usedwords || bar->capacity) {
+			return -2;
+		}
+	}
+	if (bar->usedwords > bar->capacity) return -3;
+	if (B2W(bar->numbits) != bar->usedwords) return -4;
+
+	for (i = bar->usedwords; i < bar->capacity; i++) {
+		if (bar->words[i] != 0) {
+			return -5;
+		}
+	}
+	shift = bar->numbits % WORD_SIZE;
+	if (shift) {
+		if ((bar->words[bar->usedwords-1] >> shift) != 0) {
+			return -6;
+		}
+	}
+	if (POW2(bar->capacity != bar->capacity)) {
+		return -7;
+	}
+
+	return 0;
+}
+#define DCHK(bar)	assert(barchk(&bar) == 0)
+#else 	/* DEBUG */
+#define	DCHK(bar)
+#endif /* DEBUG */
 /* save the rest for later. we've made enough bugs for now. */
+
+#define	BAR_BE	0x0
+#define BAR_LE	0x1
+#define BAR_LSW0	0x00
+#define BAR_MWS0	0x10
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define BAR_BO	BAR_LE
+#else
+#define	BAR_BO	BAR_BE
+#endif
+#define	BAR_WO	BAR_LSW0
+
+#define BA_HDR_SZ	16
+
+#define BH_BO_BIT	0x01
+#define BH_WO_BIT	0x02
+
+#define BH_ORDER	8
+#define BH_WSIZE	9
+#define BH_BARSIZE	10
+
+#define	MAJOR_VER	1
+#define MINOR_VER	2
+
+#define	MAJORVER0	('0'+(MAJOR_VER/10))
+#define	MAJORVER1	('0'+(MAJOR_VER%10))
+#define	MINORVER0	('0'+(MINOR_VER/10))
+#define	MINORVER1	('0'+(MINOR_VER%10))
+
+#define BAMAGIC0	0xBA
+#define BAMAGIC1	0xF0
+#define BAMAGIC2	0xF0
+#define BAMAGIC3	0xBA
+
+static const char bar_hdr[BA_HDR_SZ] = {
+	BAMAGIC0, BAMAGIC1, BAMAGIC2, BAMAGIC3,
+	MAJORVER0, MAJORVER1, MINORVER0, MINORVER1,
+	BAR_BO|BAR_WO, BAR_WS, sizeof(bar_t), 0,
+	0, 0, 0, 0 };
+
+int barwrite(bar_t *bar, int fd)
+{
+	size_t rv;
+	int byteswritten = 0;
+	char hdr[BA_HDR_SZ];
+
+	if (bar == NULL) return 0;
+	(void)memcpy(hdr, bar_hdr, BA_HDR_SZ);
+
+	hdr[12] = (uint8_t)(bar->usedwords >> 24)&0xFF;
+	hdr[13] = (uint8_t)(bar->usedwords >> 16)&0xFF;
+	hdr[14] = (uint8_t)(bar->usedwords >> 8)&0xFF;
+	hdr[15] = (uint8_t)(bar->usedwords)&0xFF;
+
+	rv = write(fd, hdr, BA_HDR_SZ);
+	if (rv != BA_HDR_SZ) {
+		return -2;
+	}
+	byteswritten += rv;
+	rv = write(fd, bar, sizeof(bar_t));
+	if (rv != sizeof(bar_t)) {
+		return -3;
+	}
+	byteswritten += rv;
+	rv = write(fd, bar->words, bar->usedwords * sizeof(word_t));
+	if (rv !=  bar->usedwords * sizeof(word_t)) {
+		return -4;
+	}
+	byteswritten += rv;
+
+	return byteswritten;
+}
+
+int barread(bar_t *bar, int fd)
+{
+	size_t rrv;
+	int rv;
+	char whdr[16];
+	word_t *barbuf = NULL;
+	bar_t *barrv;
+	word_t filewords;
+	word_t filebits;
+	word_t tmpwords;
+	int byteorder, wordorder, wordsize;
+	int majorver, minorver;
+
+	if (bar == NULL) return -1;
+	rrv = read(fd, whdr, BA_HDR_SZ);
+	if (rrv != BA_HDR_SZ) {
+		return -1;
+	}
+
+	/* before we do anything else, validate the header */
+	rv = memcmp(bar_hdr, whdr, 4);
+	if (rv != 0) {
+		return -2;
+	}
+	majorver = ((whdr[4] - '0')*10) + (whdr[5]-'0');
+	minorver = ((whdr[6] - '0')*10) + (whdr[7]-'0');
+
+	if (majorver > MAJOR_VER) {
+		return -3;
+	}
+
+	if ((whdr[BH_WSIZE] < 2) || (whdr[BH_WSIZE] > 3)) {
+		return -4;
+	}
+
+	/* that's enough to let us at least read the file. */
+	barbuf = malloc( (size_t)whdr[BH_BARSIZE]);
+	if (barbuf == NULL) {
+		return -5;
+	}
+	rrv = read(fd, barbuf, (size_t)whdr[BH_BARSIZE]);
+	if (rrv != whdr[BH_BARSIZE]) {
+		free(barbuf);
+		return -6;
+	}
+	byteorder = whdr[BH_ORDER] & BH_BO_BIT;
+	wordorder = whdr[BH_ORDER] & BH_WO_BIT;
+	switch (whdr[BH_WSIZE]) {
+	case 2:	wordsize = 32;
+		break;
+	case 3: wordsize = 64;
+		break;
+	default:
+		free(barbuf);
+		return -7;
+		break;
+	}
+	filewords = (whdr[12]<<24) | (whdr[12]<<16) | (whdr[12]<<8) | whdr[15];
+	/* decode at least the first word. */
+	filebits =  barbuf[0];
+	if (wordsize != WORD_SIZE) {
+		if (wordsize == 64) {
+			uint64_t *w64 = (uint64_t *)barbuf;
+			filebits = (word_t)w64[0];
+		} else {
+			uint64_t *w32 = (uint32_t *)barbuf;
+			filebits = (word_t)w32[0];
+		}
+	}
+
+	/* we can let the bar_t go now */
+	free(barbuf);
+
+	/* just so we don't allocate the universe... */
+	if (filebits > MAX_BITS) {
+		return -8;
+	}
+
+	/* more error checking */
+	if ((filewords * wordsize) < filebits) {
+		return -9;
+	}
+
+	/* to have enough room to byteswap, over-allocate a little.*/
+	tmpwords = ((filebits + 63)/64);
+	if (WORD_SIZE == 32) {
+		tmpwords *= 2;
+	}
+	barrv = barsize(bar, tmpwords);
+	if (barrv  == NULL) {
+		return -10;
+	}
+
+	/* finally time to read the data. */
+	rv = read(fd,  bar->words, filewords * (wordsize/8));
+	if (rv != filewords * (wordsize/8)) {
+		barnull(bar);
+		return -11;
+	}
+
+	/* detect the common case. */
+	if ((wordorder == BAR_WO) && (byteorder == BAR_BO) &&
+	    (wordsize == WORD_SIZE)) {
+		barsize(bar, filebits);
+		return filebits;
+	}
+
+	/* now do any necessary conversions. */
+	/* on BE systems, changing word size requires 32-bit word swapping */
+	if ((wordsize != WORD_SIZE) && (byteorder == BAR_BE)) {
+		uint32_t *w;
+		int i, n;
+		uint32_t swapw;
+		w = (uint32_t *)(bar->words);
+		n = ((filebits + 63)/64) * 2;
+		for (i = 0; i < n; i+=2) {
+			swapw = w[i];
+			w[i] = w[i+1];
+			w[i+1] = swapw;
+		}
+	}
+
+	if (wordorder != BAR_WO) {
+		/* reverse it. remember strtac? */
+		int i; word_t swapw;
+
+		for (i = 0; i < bar->usedwords/2; i++) {
+			swapw = bar->words[i];
+			bar->words[i] = bar->words[(bar->usedwords-1)-i];
+			bar->words[(bar->usedwords-1)-i] = swapw;
+		}
+	}
+
+	if (byteorder != BAR_BO) {
+		int i;
+		for (i = 0; i < filewords; i++) {
+			bar->words[i] = bswapl(bar->words[i]);
+		}
+	}
+	barsize(bar, filebits); /* trim. */
+	return filebits;
+}
+
+
 #ifdef NOTDEF
-DEBUG stuff:
-	barcheck
+almost done.
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
 #endif

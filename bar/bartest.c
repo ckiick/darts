@@ -9,11 +9,14 @@
 #include <strings.h>
 #include <inttypes.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 /*
 	TODO:
 test_bardup
-test_barprint
-test_barscan 
+barwrite, barread
 CLI options processing
 change to test harness design
 more specific test cases (overlap, d=s, word and capacity boundaries.
@@ -1513,24 +1516,170 @@ test_barswap()
 
 	/* create a distinct pattern. For now, just 32 bits. */
 	for (i = 0; i < tlen; i++) {
-		b = (tw >> (i %32)) & 0x1Ul;
-		barset(&bar1, b);
+		b = (tw >> (i %32)) & 0x1UL;
+		barassign(&bar1, i, b);
 	}
 	assert(barlen(&bar1) == tlen);
-	TBO(bar1, 1);
+	TBO(bar1, 0);
 	rv = barswap(&bar2, &bar1);
 	assert(rv == tlen);
 	assert(barlen(&bar2) == tlen);
 	assert(barlen(&bar2) == barlen(&bar1));
-	TBO(bar2, 0);
+	TBO(bar2, 1);
 	rv = barswap(&bar3, &bar2);
 	assert(rv == tlen);
 	assert(barlen(&bar3) == tlen);
 	assert(barlen(&bar2) == barlen(&bar3));
-	TBO(bar3, 1);
+	TBO(bar3, 0);
 	rv = barcmp(&bar1, &bar3);
 	assert(rv == 0);
 
+	return 0;
+}
+
+int
+test_barpopc()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2;
+	int i, j;
+	int tlen = 333;
+	int rv;
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+
+	/* null */
+	rv = barpopc(&bar1);
+	assert(rv == 0);
+
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+
+	rv = barpopc(&bar1);
+	assert(rv == 0);
+
+	barfill(&bar1, 1);
+	rv = barpopc(&bar1);
+	assert(rv == tlen);
+
+	/* set every other bit to 0 */
+	for (i = 0; i < tlen; i += 2) {
+		barflip(&bar1, i);
+	}
+	assert(barlen(&bar1) == tlen);
+	rv = barpopc(&bar1);
+	assert(rv == (tlen/2));
+	/* now verify the hard way */
+	j = 0;
+	for (i = 0; i < tlen; i++) {
+		if (barget(&bar1, i)) j++;
+	}
+	assert(rv == j);
+
+	rv = barnot(&bar2, &bar1);
+	assert(rv == tlen);
+	assert(barlen(&bar2) == barlen(&bar1));
+	assert((barpopc(&bar2) + barpopc(&bar1)) == tlen);
+
+	barnull(&bar1);
+	assert(barlen(&bar1) == 0);
+	barnull(&bar2);
+	assert(barlen(&bar2) == 0);
+
+	return 0;
+}
+
+int
+test_barsave(bar_t *bar, char *fn)
+{
+	int fd;
+	int rv;
+
+	assert(bar != NULL);
+	fd = open(fn, O_WRONLY|O_CREAT|O_TRUNC, 0660);
+	assert(fd >= 0);
+	rv = barwrite(bar, fd);
+	assert(rv > 0);
+	close(fd);
+	return rv;
+}
+
+int
+test_barload(bar_t *bar, char *fn)
+{
+	int fd;
+	int rv;
+
+	assert(bar != NULL);
+	fd = open(fn, O_RDONLY);
+	assert(fd >= 0);
+	rv = barread(bar, fd);
+	assert(rv >= 0);
+	close(fd);
+	return rv;
+}
+
+int
+test_barread_write()
+{
+	bar_t *barp1;
+	bar_t bar1, bar2;
+	int tlen = 224;
+	int rv;
+	char fn1[] = "./bartest_rw1.bar";
+	int i;
+
+	bzero(&bar1, sizeof(bar_t));
+	bzero(&bar2, sizeof(bar_t));
+
+	/* null case. of course */
+	rv = test_barsave(&bar1, fn1);
+	assert(rv > 0);
+	rv = test_barload(&bar2, fn1);
+	assert(rv == 0);
+	assert(barcmp(&bar1, &bar2) == 0);
+
+	barp1 = barsize(&bar1, tlen);
+	assert(barp1 != NULL);
+	assert(barlen(&bar1) == tlen);
+
+	/* all zeroes. */
+	rv = test_barsave(&bar1, fn1);
+	assert(rv > 0);
+	rv = test_barload(&bar2, fn1);
+	assert(rv == tlen);
+	assert(barlen(&bar1) == barlen(&bar2));
+	assert(barcmp(&bar1, &bar2) == 0);
+
+	/* all 1's. */
+	barfill(&bar1, 1);
+	rv = test_barsave(&bar1, fn1);
+	assert(rv > 0);
+	rv = test_barload(&bar2, fn1);
+	assert(rv == tlen);
+	assert(barlen(&bar1) == barlen(&bar2));
+	assert(barcmp(&bar1, &bar2) == 0);
+
+	/* 1010.. */	
+	for (i = 0; i < tlen; i += 2) {
+		barflip(&bar1, i);
+	}
+	rv = test_barsave(&bar1, fn1);
+	assert(rv > 0);
+	rv = test_barload(&bar2, fn1);
+	assert(rv == tlen);
+	assert(barlen(&bar1) == barlen(&bar2));
+	/* one more. */
+	for (i = 0; i < tlen; i++) {
+		barflip(&bar1, i);
+	}
+	rv = test_barsave(&bar1, fn1);
+	assert(rv > 0);
+	rv = test_barload(&bar2, fn1);
+	assert(rv == tlen);
+	assert(barlen(&bar1) == barlen(&bar2));
 	return 0;
 }
 
@@ -1678,6 +1827,22 @@ main(int argc, char **argv)
 		return rv;
 	}
 	vprintf(VVERB, "barswap test passed\n");
+
+	vprintf(VVERB, "test barpopc\n");
+	rv = test_barpopc();
+	if (rv != 0) {
+		vprintf(VERR, "barpopc test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barpopc test passed\n");
+
+	vprintf(VVERB, "test barread_write\n");
+	rv = test_barread_write();
+	if (rv != 0) {
+		vprintf(VERR, "barread_write test failed\n");
+		return rv;
+	}
+	vprintf(VVERB, "barread_write test passed\n");
 
 	vprintf(VVERB, "test program complete.\n");
 	return 0;

@@ -8,7 +8,7 @@ A bit array consists of n bits, contiguous in memory, where 0 <= n <= MAXINT.
 A bit array (bar) has a defined length in bits, some internal state, and
 a defined representation.
 
-A bar is represented by a bar_t object.  This object should be considered
+A bar is accessed by a bar_t object.  This object should be considered
 opaque to end users, as internal implementation and representation may
 change.  A valid, initialized 0-length bar can be constructed with a 0-filled
 bar_t, or by initializing a bar_t to the variable nobar.
@@ -206,12 +206,14 @@ returned and bar is not modified.
 	int barwrite(bar_t *bar, int fd);
 Write the bar to a file.   The fd must be open for writing.  On success,
 returns the number of bytes written to fd.  On failure, returns <0 and
-errno may be set.
+errno may be set.  If bar is NULL, returns 0.
 
 	int barread(bar_t *bar, int fd);
 Reads a bar from a file. The fd must be open for reading. The bar must have
-been written with barwrite.  On success returns the length in bits of bar.
-If the file is not in the correct format, returns 0 and bar will be empty.
+been written with barwrite.  On success returns the length in bits of bar
+(which may be 0).  The bar will be resized to the number of bits in the
+file.
+If the file is not in the correct format, returns <0 and bar will be empty.
 On other errors, returns <0 and errno may be set.
 
 	When moving saved bar files between platforms it is the
@@ -271,22 +273,38 @@ File format
 - a bar_t object
 - An array of words containing the bits in the bar
 
-The header contains 4, 32-bit values.
-- the bar magic value of 0xBAFOFOBA, represented as four individual
-bytes, written in order from left to right. (Network byte order).
-- a 4-byte version number, consisting of a two digit major version number and
-a two digit minor version number. The digits are the ascii representations,
-not the bit value.
-- a set of flags, represented as four individual bytes.  Bytes must
-be written to the file in network byte order.
-- the size of the rest of the file, not including the header, in units
-of words.
+The header contains 16 bytes in the specified order.  It should be read
+as an array of bytes and not as words, to avoid byte-order issues.
+- Bytes 0-3 contain the bar magic value of 0xBA, 0xFO, 0xFO, 0xBA.
+- Bytes 4-7 contain the ascii representation of the version number of
+the file format.  The major version is the first two numbers, and the
+minor version is the second two.  EG: version 1.02 is stored as
+[ '0', '1', '0', '2' ].
+- Byte 8 is a set of flags denoting the byte and word order of the data.
+      - bit 0 is the  byte order flag
+	0 = Big Endian (MSB on left), 1 = Little Endian (LSB on left)
+      - bit 1 is word order flag
+	0 = LSW at index 0, 1 = MSW at index 0.
+Other bits if set should be ignored if not recognized.
+- Byte 9 is the word size byte.
+This byte specifies how "large" a word was used to write the rest of the file.
+It is expressed as the log base 2 of the number of 8-bit bytes in a word.
+For 32 bit words this value is 2, (2 exp 2 = 4 bytes, * 8 bits per byte =
+32 bits).  For 64 bit words it is 3.  An implementation is required to
+support 32 and 64 bit formats.  Word sizes that are not multiples of
+8 bits are not supported.
+- Byte 10 is the bar_t data size
+	The number of bytes in the bar_t structure, which is stored immediately
+after the header.
+- Byte 11 is reserved and should be written as 0 and ignored when read.
+- Bytes 12-15 bit data size (in words)
+The size in words of the binary bit data stored in the file.  This
+value is stored in Network Byte Order (most significant byte first).
 
-The bar_t object will consist of 4 words from the in-memory object,
-which can be used to reconstruct the object when read in.  The size of
-the bar must be either stored directly, or be computable from this data.
-
-The rest of the file is the actual values of the bits.
+The bar_t structure is implementation dependent and can change with the
+version number. However, the first word of the structure written to the
+file MUST be the number of bits in the bar.   THe rest of the structure
+can be empty, or can be ignored when read.
 
 Aside from the specified header information, values are always written to the
 file in the native byte order. It is the responsibility of the code reading
@@ -297,26 +315,6 @@ bar, the implementation must check the version numbers against what it supports.
 An implementation must be able to read all formats with major numbers <=
 the version it writes.  Versions with only different minor versions numbers
 must be backwards compatible.
-
-The four bytes of flag information denote the exact format of the file.
-
-Byte 0, bit 0 - byte order flag
-	0 = Big Endian (MSB on left), 1 = Little Endian (LSB on left)
-Byte 0, bit 1 - word order flag
-	0 = LSW at index 0, 1 = MSW at index 0.
-Byte 1: word size indicator
-	This byte specifies how "large" a word was used to write the file.
-It is expressed as the log base 2 of the number of 8-bit bytes in a word.
-For 32 bit words this value is 2, (2 exp 2 = 4 bytes, * 8 bits per byte =
-32 bits).  For 64 bit words it is 3.  An implementation is required to
-support 32 and 64 bit formats.  Word sizes that are not multiples of
-8 bits are not supported.
-
-The implementation should write a bar in it's native byte-order and word
-size.  It is the responsibility of the reading implementation to do any
-necessary conversions, or to report an error if it cannot handle the given
-format.
-
 
 Implementation details
 ======================

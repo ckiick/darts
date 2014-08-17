@@ -6,7 +6,6 @@
 #include <sys/types.h>
 
 typedef unsigned long word_t;
-
 typedef unsigned int uint_t;
 
 typedef struct {
@@ -26,7 +25,7 @@ bar_t *barsize(bar_t *bar, uint_t numbits);
 void barnull(bar_t *bar);
 uint_t barlen(bar_t *bar);
 bar_t *bardup(bar_t *bar);
-uint_t barcpy(bar_t *dest, bar_t *src);
+int barcpy(bar_t *dest, bar_t *src);
 uint_t barget(bar_t *bar, uint bit_index);
 int barassign(bar_t *bar, uint_t bit_index, uint val);
 #define barset(b, i)	barassign(b, i, 1);
@@ -52,15 +51,12 @@ int barfnz(bar_t *bar, uint_t bit_index);
 #define barffz(b)	barfnz(b, 0);
 uint_t barpopc(bar_t *bar);
 int barswap(bar_t *dest, bar_t *src);
+int barwrite(bar_t *bar, int fd);
+int barread(bar_t *bar, int fd);
 
 /* missing features? */
 /*
 	DEBUG barcheck() - validation check on bar.
 */
 
-#ifdef NOTYET
-int barwrite(bar_t *bar, int fd);
-int barread(bar_t *bar, int fd);
-
-#endif
 #endif /* __BAR_H */
