@@ -659,16 +659,21 @@ int barfnz(bar_t *bar, uint_t bit_index)
 	ndx = bit_index / WORD_SIZE;
 	shift = (bit_index % WORD_SIZE);
 	if (shift) {
-		fb = __builtin_ffsl( ~(bar->words[ndx] >> shift));
+//		fb = __builtin_ffsl( ~(bar->words[ndx] >> shift));
+		fb = __builtin_ffsl( (~(bar->words[ndx])) >> shift);
 		if (fb != 0) {
-			return bit_index + (fb - 1);
+			if (fb + shift >= bar->numbits) {
+				return -1;
+			} else {
+				return bit_index + (fb - 1);
+			}
 		}
 		ndx++;
 	}
 	if (ndx >= bar->usedwords) return -1;
 	/* full words */
 	for ( ; ndx < bar->usedwords - 1; ndx ++) {
-		if (bar->words[ndx] != 0UL) {
+		if (bar->words[ndx] != ~0UL) {
 			fb = __builtin_ffsl(~(bar->words[ndx]));
 			return (fb - 1) + (ndx * WORD_SIZE);
 		}
@@ -676,7 +681,7 @@ int barfnz(bar_t *bar, uint_t bit_index)
 	/* last word. may or may not be partial */
 	shift = (bar->numbits % WORD_SIZE);
 	if (shift) shift = WORD_SIZE - shift;
-	fb = __builtin_ffsl(~(bar->words[ndx] << shift));
+	fb = __builtin_ffsl( (~bar->words[ndx]) << shift);
 	if (fb != 0) {
 		return (fb - shift) -1 + ndx * WORD_SIZE;
 	}

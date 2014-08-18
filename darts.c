@@ -156,6 +156,7 @@ fillin(int d, int r, int val)
 	sc_t *dsc;
 	int i;
 	int mv;
+	int rv;
 
 	DBG(DBG_FILLIN, ("filling in %d,%d with %d\n", d, r, val));
 	scores = &(hbos.pl[r].sc[d]);
@@ -222,8 +223,17 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d,r-1)) {
 	printf("\n");
 }
 		/* now find the new gap. */
+/*
 		while (barget(&(scores->s), scores->gap)) {
 			scores->gap++;
+		}
+*/
+		rv = barfnz(&(scores->s), scores->gap);
+		if (rv == -1) {
+			printf("OOPS! NO GAP\n");
+			exit(3);
+		} else {
+			scores->gap = rv;
 		}
 		DBG(DBG_FILLIN, ("for %d,%d,maxval=%d gap=%d \n", d,r, scores->maxval, scores->gap));
 	}

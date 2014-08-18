@@ -1390,7 +1390,7 @@ test_barfns_fnz()
 			}
 		}
 	}
-return 0;
+
 	/* Now do it all again for fnz. */
 	barnull(&bar1);
 	barnull(&bar2);
@@ -1405,7 +1405,7 @@ return 0;
 	assert(rv == -1);
 
 	/* all ones */
-	rv = barset(&bar1, tlen);
+	rv = barset(&bar1, tlen - 1);
 	assert(rv == 0);
 	assert(barlen(&bar1) == tlen);
 	barfill(&bar1, 1);
