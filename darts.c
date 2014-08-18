@@ -110,7 +110,7 @@ void
 dumpscore(sc_t score)
 {
 	int i;
-	printf("%d:[%d] ", score.gap, score.maxval);
+	printf("gap=%d:[max=%d] ", score.gap+1, score.maxval+1);
 	for (i=0; i <= score.maxval +1; i++) {
 		if (barget(&(score.s),i)) printf("%d ",i);
 	}
@@ -138,11 +138,11 @@ void
 dumpvals(int R)
 {
 	int i;
-	printf("%d:[%d] ", vals.score, R);
+	printf("score=%d:[r=%d] ", vals.score, R+1);
 	for (i = 1; i < R; i++) {
-		printf("%d, ", vals.vals[i]);
+		printf("%d, ", vals.vals[i]+1);
 	}
-	printf("%d\n", vals.vals[i]);
+	printf("%d\n", vals.vals[i]+1);
 }
 
 /* at depth r, use val to fill in the frame for r, for all 1...D darts
@@ -158,7 +158,7 @@ fillin(int d, int r, int val)
 	int mv;
 	int rv;
 
-	DBG(DBG_FILLIN, ("filling in %d,%d with %d\n", d, r, val));
+	DBG(DBG_FILLIN, ("filling in d=%d,r=%d with val %d\n", d+1, r+1, val+1));
 	scores = &(hbos.pl[r].sc[d]);
 
 	if (d==0) {
@@ -166,7 +166,7 @@ fillin(int d, int r, int val)
 			dsc = &(hbos.pl[r-1].sc[d]);
 			scores->gap = dsc->gap;
 			barcpy(&(scores->s), &(dsc->s));
-DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d, r-1)) {
+DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d+1, r-1+1)) {
 			dumpscore(*dsc);
 			printf(" to ");
 			dumpscore(*scores);
@@ -178,14 +178,14 @@ DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d, r-1)) {
 				scores->gap++;
 			}
 		}
-		DBG(DBG_FILLIN, ("base for %d,%d,gap=%d\n", d,r, scores->gap));
+		DBG(DBG_FILLIN, ("base for d=%d,r=%d,gap=%d\n", d+1,r+1, scores->gap+1));
 	} else {
 		/* otherwise, d > 1 */
 		fillin(d-1, r, val);
 /* what we want to do is copy, shift, or. */
 		dsc = &(hbos.pl[r].sc[d-1]);
 		barcpy(&(scores->s),&(dsc->s));
-DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d-1, r)) {
+DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d-1+1, r+1)) {
 			dumpscore(*scores);
 			printf("\n");
 }
@@ -193,7 +193,7 @@ DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d-1, r)) {
 		baror(&(scores->s), &(dsc->s), &(scores->s));
 		scores->gap = dsc->gap;
 		scores->maxval = dsc->maxval + val;
-DBG(DBG_FILLIN2, ("added %d ", val)) {
+DBG(DBG_FILLIN2, ("added val %d ", val+1)) {
 	dumpscore(*dsc);
 	printf(" to make  ");
 	dumpscore(*scores);
@@ -216,7 +216,7 @@ DBG(DBG_FILLIN2, ("added %d ", val)) {
 			}
 */
 		}
-DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d,r-1)) {
+DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	dumpscore(*dsc);
 	printf(" and got ");
 	dumpscore(*scores);
@@ -228,29 +228,34 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d,r-1)) {
 			scores->gap++;
 		}
 */
-		rv = barfnz(&(scores->s), scores->gap);
+		rv = barfnz(&(scores->s), scores->gap - 2);
 		if (rv == -1) {
-			printf("OOPS! NO GAP\n");
-			exit(3);
+if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
+			/* add a 0 at the end. */
+			scores->gap = barlen(&(scores->s));
+			barclr(&(scores->s), scores->gap);
+			scores->gap++;
+//			printf("OOPS! NO GAP\n");
+//			exit(3);
 		} else {
-			scores->gap = rv;
+			scores->gap = rv + 1;
 		}
-		DBG(DBG_FILLIN, ("for %d,%d,maxval=%d gap=%d \n", d,r, scores->maxval, scores->gap));
+		DBG(DBG_FILLIN, ("for d=%d,r=%d,maxval=%d gap=%d \n", d+1,r+1, scores->maxval+1, scores->gap+1));
 	}
 	/* update best scores. */
 	if (scores->gap > besties[d][r].score) {
 		besties[d][r] = vals;
 		besties[d][r].score = scores->gap;
-		DBG(DBG_PRO, ("new best for %d,%d is %d\n", d, r, scores->gap));
-		DBG(DBG_DUMPV, ("vals ")) {
+		DBG(DBG_PRO, ("new best for d=%d,r=%d is %d\n", d+1, r+1, scores->gap+1));
+		DBG(DBG_DUMPV, ("\tvals ")) {
 			dumpvals(r);
 		}
 	}
-	DBG(DBG_DUMPS, ("scores for %d,%d ",d,r )) {
+	DBG(DBG_DUMPS, ("scores for d=%d,r=%d ",d+1,r+1 )) {
 		dumpscore(*scores);
 		printf("\n");
 	}
-	DBG(DBG_FILLIN, ("filled in %d,%d with %d\n", d, r, val));
+	DBG(DBG_FILLIN, ("filled in d=%d,r=%d with val %d\n", d+1, r+1, val+1));
 }
 
 
@@ -263,7 +268,7 @@ mrf(int d, int r)
 	sc_t *scores;
 	int lv, uv, cv;
 
-	DBG(DBG_MRF, ("-> called with d=%d r=%d\n", d, r));
+	DBG(DBG_MRF, ("-> called with d=%d r=%d\n", d+1, r+1));
 	if ((d < 0) || (r < 0)) return;
 	if ((d == 0) && (r == 0)) return;
 	if (r >= limits[d]) return;
@@ -275,7 +280,7 @@ mrf(int d, int r)
 		uv = hbos.pl[r-1].sc[d].gap;
 	}
 
-	DBG(DBG_MRF, ("  r %d val from %d to %d\n", r, lv, uv));
+	DBG(DBG_MRF, ("  r=%d val from %d to %d\n", r+1, lv+1, uv+1));
 
 	for (cv = lv; cv <= uv; cv++) {
 		vals.vals[r] = cv;
@@ -285,14 +290,14 @@ mrf(int d, int r)
 			dumpframe(r,d+1);
 		}
 		if (r+1 < limits[d]) {
-			DBG(DBG_MRF, ("  recursing with %d %d\n", d, r+1));
+			DBG(DBG_MRF, ("  recursing with d=%d,r=%d\n", d+1, r+1+1));
 			mrf(d, r + 1);
 		}
 	}
 	DBG(DBG_DUMPV, ("current vals ")) {
 		dumpvals(r);
 	}
-	DBG(DBG_MRF, ("<- returning from %d %d\n", d, r));
+	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", d+1, r+1));
 }
 
 /* at the end, print out everything we found. */
@@ -304,9 +309,9 @@ dumpscores(int D)
 	printf("best scores found this run:\n");
 	for (d=0; d < D; d++) {
 		for (r = 0; r < limits[d]; r++) {
-			printf("%d darts, %d regions: scores=%d; vals=", d+1, r+1, besties[d][r].score);
+			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, besties[d][r].score+1);
 			for (i=0; i <= r; i++) {
-				printf("%d,", besties[d][r].vals[i]);
+				printf("%d,", besties[d][r].vals[i]+1);
 			}
 			printf("\n");
 		}
@@ -327,8 +332,8 @@ initstuff(int D, int R)
 
 	/* set the degenerate case up first. */
 	barset(&(hbos.pl[0].sc[0].s),1);
-	hbos.pl[0].sc[0].gap = 2;
-	hbos.pl[0].sc[0].maxval = 1;
+	hbos.pl[0].sc[0].gap = 1;
+	hbos.pl[0].sc[0].maxval = 0;
 	hbos.pl[0].rval = 1;
 
 	DBG(DBG_DUMPF, ("init frame\n")) {

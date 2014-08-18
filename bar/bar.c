@@ -414,7 +414,9 @@ int barlsle(bar_t *dest, bar_t *src, uint_t dist)
 	uint_t used, shift;
 	uint_t offset, rem;
 	int ndx, mark;		/* must be signed. */
+	uint_t srcuw;		/* src==dest can be confusing */
 
+	srcuw = src->usedwords;
 	if (src->numbits + dist != dest->numbits) {
 		if (barsize(dest, src->numbits+dist) == NULL) {
 			return -1;
@@ -428,7 +430,7 @@ int barlsle(bar_t *dest, bar_t *src, uint_t dist)
 	offset = dist / WORD_SIZE;
 
 	if (shift == 0) {
-		memmove(&(dest->words[used]), &(src->words[0]), src->usedwords * sizeof(word_t));
+		memmove(&(dest->words[used]), &(src->words[0]), srcuw * sizeof(word_t));
 	} else {
 		for (ndx = dest->usedwords - 1; ndx >=0; ndx--) {
 			mark = ndx - offset;
@@ -654,18 +656,19 @@ int barfnz(bar_t *bar, uint_t bit_index)
 	}
 	/* three sections, any of which may be missing.
 	 * partial word at beginning, full words in middle, partial
-	 * word at end.
+	 * word at end.  And the special case where beginning IS the end.
 	 */
 	ndx = bit_index / WORD_SIZE;
 	shift = (bit_index % WORD_SIZE);
 	if (shift) {
-//		fb = __builtin_ffsl( ~(bar->words[ndx] >> shift));
-		fb = __builtin_ffsl( (~(bar->words[ndx])) >> shift);
+		word_t w = ~(bar->words[ndx]) >> shift;
+		fb = __builtin_ffsl(w);
 		if (fb != 0) {
-			if (fb + shift >= bar->numbits) {
+			if ((ndx == (bar->usedwords - 1)) &&
+		 	   (fb +shift >= bar->numbits % WORD_SIZE)) {
 				return -1;
 			} else {
-				return bit_index + (fb - 1);
+				return (fb + shift - 1) + ndx*WORD_SIZE;
 			}
 		}
 		ndx++;
