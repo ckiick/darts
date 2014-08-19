@@ -114,7 +114,7 @@ block_t hbos;
  * regions and darts are printed using whole numbers 1..d or 1..n.
  * the values are 1-based.  There's an implicit 0-value region, but we
  * don't bother to track it.
-
+ *
  * method - with 1 dart 1 region, there is only 1 value, and it has
  * to be 1, giving a gap at 2 (score).  This is the foundation case.
  * Incrementing the number of darts (n darts, 1 region) increments
@@ -128,12 +128,12 @@ block_t hbos;
  * V[m] = {V(m)}= { V1...Vm}. This is mapped to a set B(n,m) of numbers that
  * can be reached with that combination of values and the given number of
  * darts. The score S is then the first "missing" number in the set B.
- * If we have the sed B(n-1,m), what happens when we add a dart? Imagine
+ * If we have the set {B(n-1,m)}, what happens when we add a dart? Imagine
  * a dartboard with darts in it already.  If we throw another dart we
  * get to add any of the values in {V} to our total (including the
  * case where we miss the board altogether).  Therefore we can construct
- * the set B(n,m) from B(n-1,m) by adding all v in {V} to the values in
- * B(n-1,m).
+ * the set {B(n,m)} from {B(n-1,m)} by adding all v in {V} to the values in
+ * {B(n-1,m)}.
  *       for v in {V}
  *		for b in {B}
  *			{B} += v+b
@@ -141,7 +141,7 @@ block_t hbos;
  * d=1.  Adding a region with value v to B(1,m-1) is simply adding
  * v to the set B. {B(1,m)} = {B(1,m-1)} + v;
  * For any d=n,r=m given the values for the regions V[m], we can construct the
- * set {B(n,m)} if we have {B{n-1,m)}.  Simply recusing downward on n
+ * set {B(n,m)} if we have {B{n-1,m)}.  Simply recursing downward on n
  * eventually gets us to the set {B(1,m)}.  This set can be found by
  * using {B(1,m-1)}, and recursing on this eventually gets us to the
  * foundation set {B(1,1)}, which we know already is simply {1}, with
@@ -151,8 +151,15 @@ block_t hbos;
  * Adding a value greater than the first gap cannot effect the score,
  * so that is the upper limit.  If we order our darts by their value
  * then we can ignore any v <= V[r-1].  So the set of possible values
- * for v[m] ranges from v[m-1]+1 to S(n,m-1) inclusive.
- * 
+ * for v[m] ranges from v[m-1]+1 to S(n,m-1) inclusive.  Anchoring the
+ * value of V[1] at 1 determines the complete set of possible values for all
+ * V[m].
+ * An algorithm A takes parameters D and R for the number of darts and
+ * regions, respectively.  Starting with r=1, it determines the range
+ * of values for V[r] and interates over them.  For each v, it recurses
+ * upward to A(d,r+1) until r==R.  Over the range of v, the best score
+ * is kept by saving the values in {V} to a optimal score set O which
+ * has a set V for each pair of d,r.
  */
 
 void
