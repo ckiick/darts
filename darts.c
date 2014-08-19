@@ -38,6 +38,12 @@
 #include <unistd.h>
 #include "bar.h"
 
+#define DEBUG
+
+#ifdef DEBUG
+#include <assert.h>
+#endif
+
 #define DBG_INIT	0x00000001
 #define DBG_FILLIN	0x00000002
 #define DBG_MRF		0x00000004
@@ -57,14 +63,16 @@
 
 long	dbg = DBG_NONE;
 
-#define DEBUG
-
 #ifdef DEBUG
 #define	DBG(f, pargs)			\
 	if ((((f) & dbg)==(f)) ? (printf("%s:",__func__) + printf pargs) : 0)
+
+#define ASSERT(x)	assert((x))
 #else
 #define	DBG(f, pargs)			\
 	if (0)
+
+#define ASSERT(X)
 #endif
 
 uint64_t	hashval = 1000000;
@@ -112,54 +120,74 @@ block_t hbos;
  * darts are 0-based. if there are n darts, they are numbered 0..n-1.
  * regions are also 0 based, r regions numberes 0 .. r-1.
  * regions and darts are printed using whole numbers 1..d or 1..n.
- * the values are 1-based.  There's an implicit 0-value region, but we
- * don't bother to track it.
+ * the values are 1-based.  There's an implicit 0-value region, which
+ * corresponds to a dart missing the dart board, but we don't bother to
+ * track it.
  *
  * method - with 1 dart 1 region, there is only 1 value, and it has
  * to be 1, giving a gap at 2 (score).  This is the foundation case.
  * Incrementing the number of darts (n darts, 1 region) increments
- * the score.  Now we can calculate solutions for any value of d for
+ * the score (S=d+1).  Now we can calculate solutions for any value of d for
  * r=1.  Conversely, with 1 dart it is easy to add another region with
  * value v, by simply adding v to the set of numbers reached and checking 
  * for a change in the score/gap.   So we can contruct any d=1,r=m or
  * d=n,r=1.
- * For d=n,r=m, we can construct a solution that is a set of values for 
- * each region. A solution is a set of values, one for each region.
- * V[m] = {V(m)}= { V1...Vm}. This is mapped to a set B(n,m) of numbers that
- * can be reached with that combination of values and the given number of
- * darts. The score S is then the first "missing" number in the set B.
- * If we have the set {B(n-1,m)}, what happens when we add a dart? Imagine
+ * For d=n,r=m, we can construct data that is a set of values for
+ * each region and the numbers it can reach with the given number of darts.
+ * The score is then the first "gap" in the set of numbers that can be
+ * reached.  An optimal solution is the maximum score for all possible
+ * region values.
+ * A single score for darts d and regions r is calculated from the values
+ * assigned to the regions. {V(r)}= { V[1]...V[r]}. This is mapped to a set
+ * {B(d,r)} of numbers that can be reached with that combination of values
+ * and the given number of darts.  The score S is then the first missing
+ * integer in {B(d,r)}.
+ * If we have the set {B(d-1,r)}, what happens when we add a dart? Imagine
  * a dartboard with darts in it already.  If we throw another dart we
- * get to add any of the values in {V} to our total (including the
- * case where we miss the board altogether).  Therefore we can construct
- * the set {B(n,m)} from {B(n-1,m)} by adding all v in {V} to the values in
- * {B(n-1,m)}.
- *       for v in {V}
- *		for b in {B}
- *			{B} += v+b
- * Moving from n-1 to n regions is harder, except in the case where
- * d=1.  Adding a region with value v to B(1,m-1) is simply adding
- * v to the set B. {B(1,m)} = {B(1,m-1)} + v;
- * For any d=n,r=m given the values for the regions V[m], we can construct the
- * set {B(n,m)} if we have {B{n-1,m)}.  Simply recursing downward on n
- * eventually gets us to the set {B(1,m)}.  This set can be found by
- * using {B(1,m-1)}, and recursing on this eventually gets us to the
- * foundation set {B(1,1)}, which we know already is simply {1}, with
- * a score of 2.  Note that finding a solution for n,m also yeilds solutions
- * for all d,r 1..n,1--m.
- * Finally, how do we know what to use for v when adding a region?
- * Adding a value greater than the first gap cannot effect the score,
- * so that is the upper limit.  If we order our darts by their value
- * then we can ignore any v <= V[r-1].  So the set of possible values
- * for v[m] ranges from v[m-1]+1 to S(n,m-1) inclusive.  Anchoring the
- * value of V[1] at 1 determines the complete set of possible values for all
- * V[m].
- * An algorithm A takes parameters D and R for the number of darts and
- * regions, respectively.  Starting with r=1, it determines the range
- * of values for V[r] and interates over them.  For each v, it recurses
- * upward to A(d,r+1) until r==R.  Over the range of v, the best score
- * is kept by saving the values in {V} to a optimal score set O which
- * has a set V for each pair of d,r.
+ * get to add any of the values in {V(r)} to our total (including the
+ * case where we miss the board altogether).  Therefore we can extend
+ * the set {B(d,r)} from {B(d-1,r)} by adding all v in {V} to the values in
+ * {B(d-1,r)}.
+ *       for each pair v,b, v in {V(r)} and b in {B(d-1,r)}
+ *		{B(d,r} += v+b;
+ * So to get {B(d,r)} we need {B(d-1,r)} and {V(r)}.
+ * This can be found by recursing until d=1 is reached, which from above
+ * is defined as {B(1,r)} = {V(r)}.
+ * Now that we know how to find S(d,r) given {V(r)}, finding the optimal
+ * solution requires exploring all possible sets of {V(r)}.  Fortunately,
+ * the range of values for any region can be pruned quite a bit. If we
+ * are adding a region r, then it doesn't effect the score at all if
+ * V[r] is greater than the gap.  So the upper bound on V[r] must be
+ * S(d,r-1).  If we order the darts by value, then anything at or below
+ * the last value will have already been covered.  So the lower limit
+ * is V[r-1]+1.  This again presents a good use of recursion, since we
+ * know that V[1] = 1, and S(d,1) = d+1.
+ * In order to get S(d,r-1) we have to have {B(d,r-1)}.  Thus to find
+ * the optimal V[r] we need both {B(d-1,r)} and {B(d,r-1)}.  Looked at
+ * another way, when finding optimal S(d,r) we also get optimal S(1..d, 1..r)
+ * thrown in!
+ * The algorithm A(D,R) returns the set {V(R)} that yeilds the highest
+ * score S for D,R. In fact, it can fill out a matrix of sets for all
+ * 1..D,1..R as O[D,R]{V(1..r)} that provides optimal solutions for all
+ * values of D and R.
+ * A(d,r), in order to avoid repeating combinations of values, starts
+ * at r=1. So the initial call is A(D,1) with the limit of R being saved
+ * as a global.  Also global is the current set {V(r)}, and the sets
+ * {B(1..D,1..R)}, along with the scores S(1..D,1..R).
+ * On entry A determines the limits of V[r]. For the initial call this
+ * is just 1, otherwise it is V[r-1]+1 to S(d-1,r).  Also we know that
+ * S(1,1) must be 2, and that {B(1,1)} = { 1 }.
+ * The algorithm iterates V[r] over those limits, first recursing "down" with
+ * A(d-1,r) to get the set {B(d-1,r)}. Then it recurses "up" to get
+ * A(d,r+1), as long as r < R.  The score for each V[r] is compared to the
+ * current best score, and the set {V[r]} with the better score is kept
+ * in the optimal score matrix (If S(d,r) > S(O[d,r]), then O[d,r] = {V[r]}).
+ * When the initial call to A returns, the matrix O will contain all
+ * optimal solutions for the problem for all values of R and D.
+ * 
+ * Note that if the sets {B} are represented as bit-vectors, then
+ * "Adding" two sets becomes a bit-wise OR operation, and the operation
+ * of "add value v to all values in B" becomes a SHIFT+OR (X={B}|({B}<<v)).
  */
 
 void
@@ -167,7 +195,7 @@ dumpscore(sc_t score)
 {
 	int i;
 	printf("gap=%d:[max=%d] ", score.gap, score.maxval);
-	for (i=0; i <= score.maxval +1; i++) {
+	for (i=1; i <= score.maxval +1; i++) {
 		if (barget(&(score.s),i)) printf("%d ",i);
 	}
 //	printf("\n");
@@ -201,6 +229,25 @@ dumpvals(int R)
 	printf("%d\n", vals.vals[i]);
 }
 
+void
+dumpmore(int d, int r)
+{
+	int i;
+	sc_t *scores;
+
+	scores = &(hbos.pl[r].sc[d]);
+
+	printf("O[d=%d,r=%d]:S=%d,V={", d+1, r+1, scores->gap);
+	for (i = 0; i < r+1; i++) {
+		printf("%d ", vals.vals[i]);
+	}
+	printf("},max=%d,B={", scores->maxval);
+	for (i=1; i <= scores->maxval +1; i++) {
+		if (barget(&(scores->s),i)) printf("%d ",i);
+	}
+	printf("}\n");
+}
+
 /* at depth r, use val to fill in the frame for r, for all 1...D darts
  * we assume all frames < r have been filled in already.
  * returns score (gap). val does not change on any frame.
@@ -214,14 +261,19 @@ fillin(int d, int r, int val)
 	int mv;
 	int rv;
 
+	ASSERT((d >=0)&&(r>=0));
 	DBG(DBG_FILLIN, ("filling in d=%d,r=%d with val %d\n", d+1, r+1, val));
 	scores = &(hbos.pl[r].sc[d]);
 
 	if (d==0) {
 		if (r > 0) {
+			/* we are adding a value r to {B(1,r-1)}.
+			 * with 1 dart we just add the value v to B.
+			 */
 			dsc = &(hbos.pl[r-1].sc[d]);
-			scores->gap = dsc->gap;
+			ASSERT(val >= (barlen(&(dsc->s))-1));
 			barcpy(&(scores->s), &(dsc->s));
+			scores->maxval = val;
 DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d+1, r-1+1)) {
 	dumpscore(*dsc);
 	printf(" to ");
@@ -229,21 +281,23 @@ DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d+1, r-1+1)) {
 	printf("\n");
 }
 			barset(&(scores->s), val);
-			scores->maxval=val;
-			if (scores->gap == val) {
-				scores->gap++;
+			scores->gap = barfnz(&(scores->s), 1);
+			if (scores->gap == -1) {
+				scores->gap = barlen(&(scores->s));
+				barclr(&(scores->s), scores->gap);
 			}
+//			scores->maxval=val;
 		}
 		DBG(DBG_FILLIN, ("base for d=%d,r=%d,gap=%d\n", d+1,r+1, scores->gap));
 	} else {
 		/* otherwise, d > 1 */
 		fillin(d-1, r, val);
-/* what we want to do is copy, shift, or. */
+		/* what we want to do is copy, shift, or. */
 		dsc = &(hbos.pl[r].sc[d-1]);
 		barcpy(&(scores->s),&(dsc->s));
-DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d-1+1, r+1)) {
-			dumpscore(*scores);
-			printf("\n");
+DBG(DBG_FILLIN2, ("copied (only) d=%d r=%d ", d-1+1, r+1)) {
+	dumpscore(*scores);
+	printf("\n");
 }
 		barlsle(&(scores->s), &(scores->s), val);
 		baror(&(scores->s), &(dsc->s), &(scores->s));
@@ -255,23 +309,13 @@ DBG(DBG_FILLIN2, ("added val %d ", val)) {
 	dumpscore(*scores);
 	printf("\n");
 }
-/*
-		for (i = 0; i <= scores->maxval; i++) {
-			if (dsc->s[i]) {
-				scores->s[i+val]++;
-			}
-		}
-*/
+
 		if (r > 0) {
-			/* now do the d,r-1 half. */
+			// now do the d,r-1 half.
 			dsc = &(hbos.pl[r-1].sc[d]);
 			baror(&(scores->s), &(dsc->s), &(scores->s));
-/*
-			for (i = 0; i <= dsc->maxval; i++) {
-				scores->s[i] += dsc->s[i];
-			}
-*/
 		}
+
 DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	dumpscore(*dsc);
 	printf(" and got ");
@@ -279,22 +323,18 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	printf("\n");
 }
 		/* now find the new gap. */
-/*
-		while (barget(&(scores->s), scores->gap)) {
-			scores->gap++;
-		}
-*/
-		rv = barfnz(&(scores->s), scores->gap - 2);
+//		rv = barfnz(&(scores->s), scores->gap - 2);
+		rv = barfnz(&(scores->s),1);
 		if (rv == -1) {
 if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
 			/* add a 0 at the end. */
 			scores->gap = barlen(&(scores->s));
 			barclr(&(scores->s), scores->gap);
-			scores->gap++;
+//			scores->gap++;
 //			printf("OOPS! NO GAP\n");
 //			exit(3);
 		} else {
-			scores->gap = rv + 1;
+			scores->gap = rv;
 		}
 		DBG(DBG_FILLIN, ("for d=%d,r=%d,maxval=%d gap=%d \n", d+1,r+1, scores->maxval, scores->gap));
 	}
@@ -312,6 +352,10 @@ if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
 		printf("\n");
 	}
 	DBG(DBG_FILLIN, ("filled in d=%d,r=%d with val %d\n", d+1, r+1, val));
+
+	DBG(DBG_DUMPV, ("  ")) {
+		dumpmore(d,r);
+	}
 }
 
 /* massively recursive function. Well, maybe not so massive. */
@@ -324,7 +368,7 @@ mrf(int d, int r)
 	DBG(DBG_MRF, ("-> called with d=%d r=%d\n", d+1, r+1));
 	if ((d < 0) || (r < 0)) return;
 	if ((d == 0) && (r == 0)) return;
-	if (r >= limits[d]) return;
+	if (r >= limits[d]) return;	/* important stop condition. */
 
 	if (r == 0) {
 		lv = uv = 1;
@@ -333,7 +377,7 @@ mrf(int d, int r)
 		uv = hbos.pl[r-1].sc[d].gap;
 	}
 
-	DBG(DBG_MRF, ("  r=%d val from %d to %d\n", r+1, lv, uv));
+	DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", r+1, lv, uv));
 
 	for (cv = lv; cv <= uv; cv++) {
 		vals.vals[r] = cv;
@@ -343,7 +387,7 @@ mrf(int d, int r)
 			dumpframe(r,d+1);
 		}
 		if (r+1 < limits[d]) {
-			DBG(DBG_MRF, ("  recursing with d=%d,r=%d\n", d+1, r+1+1));
+			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", d+1, r+1+1, cv));
 			mrf(d, r + 1);
 		}
 	}
@@ -388,9 +432,13 @@ initstuff(int D, int R)
 	 * also, there must always be a val=1.
 	 */
 	barset(&(hbos.pl[0].sc[0].s),1);
+	// should we set bit 0 as well??
 	hbos.pl[0].sc[0].gap = 2;
 	hbos.pl[0].sc[0].maxval = 1;
 	hbos.pl[0].rval = 1;
+
+	besties[0][0].score = 2;
+	besties[0][0].vals[0] = 1;
 
 	DBG(DBG_DUMPF, ("init frame\n")) {
 		dumpscore(hbos.pl[0].sc[0]);
