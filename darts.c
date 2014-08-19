@@ -80,37 +80,86 @@ char		*cpstr = NULL;
 int limits[6] = { 40, 40, 40, 30, 20, 10 };
 
 typedef struct _sc {
-	bar_t s;
+	bar_t s;		/* bit array. */
 //	uint8_t s[MAXVAL];
-	int gap;
-	int maxval;
+	int gap;		/* also score. first uncovered number */
+	int maxval;		/* max val covered. */
 } sc_t;
 
 typedef struct _plane {
-	sc_t sc[MAXD];
-	int rval;
+	sc_t sc[MAXD];		/* one set for each number of darts */
+	int rval;		/* value of region for this plane. */
 } plane_t;
 
 typedef struct _block {
-	plane_t pl[MAXR+1];
+	plane_t pl[MAXR+1];	/* one for each number of regions. */
 } block_t;
 
 typedef struct _vals {
-	int score;
-	int vals[MAXR+1];
+	int score;		/* where is the first gap? */
+	int vals[MAXR+1];	/* value of each region. */
 } vals_t;
 
-vals_t vals;
-vals_t besties[MAXD][MAXR+1];
+vals_t vals;			/* current set of r values. */
+vals_t besties[MAXD][MAXR+1];	/* best values for each r,d comb. */
 
 /* global huge block of stuff */
 block_t hbos;
+
+
+/*
+ * a few semi-helpful notes.
+ * darts are 0-based. if there are n darts, they are numbered 0..n-1.
+ * regions are also 0 based, r regions numberes 0 .. r-1.
+ * regions and darts are printed using whole numbers 1..d or 1..n.
+ * the values are 1-based.  There's an implicit 0-value region, but we
+ * don't bother to track it.
+
+ * method - with 1 dart 1 region, there is only 1 value, and it has
+ * to be 1, giving a gap at 2 (score).  This is the foundation case.
+ * Incrementing the number of darts (n darts, 1 region) increments
+ * the score.  Now we can calculate solutions for any value of d for
+ * r=1.  Conversely, with 1 dart it is easy to add another region with
+ * value v, by simply adding v to the set of numbers reached and checking 
+ * for a change in the score/gap.   So we can contruct any d=1,r=m or
+ * d=n,r=1.
+ * For d=n,r=m, we can construct a solution that is a set of values for 
+ * each region. A solution is a set of values, one for each region.
+ * V[m] = {V(m)}= { V1...Vm}. This is mapped to a set B(n,m) of numbers that
+ * can be reached with that combination of values and the given number of
+ * darts. The score S is then the first "missing" number in the set B.
+ * If we have the sed B(n-1,m), what happens when we add a dart? Imagine
+ * a dartboard with darts in it already.  If we throw another dart we
+ * get to add any of the values in {V} to our total (including the
+ * case where we miss the board altogether).  Therefore we can construct
+ * the set B(n,m) from B(n-1,m) by adding all v in {V} to the values in
+ * B(n-1,m).
+ *       for v in {V}
+ *		for b in {B}
+ *			{B} += v+b
+ * Moving from n-1 to n regions is harder, except in the case where
+ * d=1.  Adding a region with value v to B(1,m-1) is simply adding
+ * v to the set B. {B(1,m)} = {B(1,m-1)} + v;
+ * For any d=n,r=m given the values for the regions V[m], we can construct the
+ * set {B(n,m)} if we have {B{n-1,m)}.  Simply recusing downward on n
+ * eventually gets us to the set {B(1,m)}.  This set can be found by
+ * using {B(1,m-1)}, and recursing on this eventually gets us to the
+ * foundation set {B(1,1)}, which we know already is simply {1}, with
+ * a score of 2.  Note that finding a solution for n,m also yeilds solutions
+ * for all d,r 1..n,1--m.
+ * Finally, how do we know what to use for v when adding a region?
+ * Adding a value greater than the first gap cannot effect the score,
+ * so that is the upper limit.  If we order our darts by their value
+ * then we can ignore any v <= V[r-1].  So the set of possible values
+ * for v[m] ranges from v[m-1]+1 to S(n,m-1) inclusive.
+ * 
+ */
 
 void
 dumpscore(sc_t score)
 {
 	int i;
-	printf("gap=%d:[max=%d] ", score.gap+1, score.maxval+1);
+	printf("gap=%d:[max=%d] ", score.gap, score.maxval);
 	for (i=0; i <= score.maxval +1; i++) {
 		if (barget(&(score.s),i)) printf("%d ",i);
 	}
@@ -127,7 +176,7 @@ dumpframe(int r, int D)
 
 //	printf("frame %d \n", r);
 	for (d =0; d < D; d++) {
-		printf("d=%d ", d);
+		printf("d=%d ", d+1);
 		dumpscore(f->sc[d]);
 		printf("\n");
 	}
@@ -167,10 +216,10 @@ fillin(int d, int r, int val)
 			scores->gap = dsc->gap;
 			barcpy(&(scores->s), &(dsc->s));
 DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d+1, r-1+1)) {
-			dumpscore(*dsc);
-			printf(" to ");
-			dumpscore(*scores);
-			printf("\n");
+	dumpscore(*dsc);
+	printf(" to ");
+	dumpscore(*scores);
+	printf("\n");
 }
 			barset(&(scores->s), val);
 			scores->maxval=val;
@@ -178,7 +227,7 @@ DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d+1, r-1+1)) {
 				scores->gap++;
 			}
 		}
-		DBG(DBG_FILLIN, ("base for d=%d,r=%d,gap=%d\n", d+1,r+1, scores->gap+1));
+		DBG(DBG_FILLIN, ("base for d=%d,r=%d,gap=%d\n", d+1,r+1, scores->gap));
 	} else {
 		/* otherwise, d > 1 */
 		fillin(d-1, r, val);
@@ -240,13 +289,13 @@ if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
 		} else {
 			scores->gap = rv + 1;
 		}
-		DBG(DBG_FILLIN, ("for d=%d,r=%d,maxval=%d gap=%d \n", d+1,r+1, scores->maxval, scores->gap+1));
+		DBG(DBG_FILLIN, ("for d=%d,r=%d,maxval=%d gap=%d \n", d+1,r+1, scores->maxval, scores->gap));
 	}
 	/* update best scores. */
 	if (scores->gap > besties[d][r].score) {
 		besties[d][r] = vals;
 		besties[d][r].score = scores->gap;
-		DBG(DBG_PRO, ("new best for d=%d,r=%d is %d\n", d+1, r+1, scores->gap+1));
+		DBG(DBG_PRO, ("new best for d=%d,r=%d is %d\n", d+1, r+1, scores->gap));
 		DBG(DBG_DUMPV, ("\tvals ")) {
 			dumpvals(r);
 		}
@@ -257,9 +306,6 @@ if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
 	}
 	DBG(DBG_FILLIN, ("filled in d=%d,r=%d with val %d\n", d+1, r+1, val));
 }
-
-
-
 
 /* massively recursive function. Well, maybe not so massive. */
 void
@@ -309,9 +355,9 @@ dumpscores(int D)
 	printf("best scores found this run:\n");
 	for (d=0; d < D; d++) {
 		for (r = 0; r < limits[d]; r++) {
-			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, besties[d][r].score+1);
+			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, besties[d][r].score);
 			for (i=0; i <= r; i++) {
-				printf("%d,", besties[d][r].vals[i]+1);
+				printf("%d,", besties[d][r].vals[i]);
 			}
 			printf("\n");
 		}
@@ -330,10 +376,13 @@ initstuff(int D, int R)
 	DBG(DBG_INIT, ("zeroing out besties %d bytes\n", sizeof(besties)));
 	bzero(besties, sizeof(besties));
 
-	/* set the degenerate case up first. */
+	/* set the degenerate case up first.
+	 * d=1, r=1 can only have a val of 1 and a score/gap of 2.
+	 * also, there must always be a val=1.
+	 */
 	barset(&(hbos.pl[0].sc[0].s),1);
-	hbos.pl[0].sc[0].gap = 1;
-	hbos.pl[0].sc[0].maxval = 0;
+	hbos.pl[0].sc[0].gap = 2;
+	hbos.pl[0].sc[0].maxval = 1;
 	hbos.pl[0].rval = 1;
 
 	DBG(DBG_DUMPF, ("init frame\n")) {
