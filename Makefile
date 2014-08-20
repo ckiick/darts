@@ -17,9 +17,9 @@ prof:	darts.prof
 	ggprof -b -c ./darts.prof >> gprof.out
 	ggprof -b -l ./darts.prof >> gprof.out
 	head -20 gprof.out
-	perf record ./darts.prof 3 6
-	perf report ./darts.prof > gperf.out
-	perf annotate ./darts.prof >> gperf.out
+#	gperf record ./darts.prof 3 6
+#	gperf report ./darts.prof > gperf.out
+#	gperf annotate ./darts.prof >> gperf.out
 
 clean:
 	rm -f gmon.out gperf.out gprof.out *.gcda *.gcno perf.data

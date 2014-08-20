@@ -1,0 +1,396 @@
+
+Parallelizing.
+
+Thread based || doesn't seem to work to well here.
+However, there are a couple of places to divide things up.
+
+When we call mrf, it determines a range of values for the current
+r to process.  Those are done serially, but they do not depend on
+each other.  Therefore a separate process could be forked off to
+process each one, or at least a segment of each one.
+
+Three cases:
+1)	only 1 cpu available.
+	process as we do now.
+
+2)	cpus > tasks  if (R=rhi-rlow) < (n=cpus), then we can give 1 or more
+cpus to each sub-process.  In that case we divide up into R sub-tasks,
+and each one gets (evenly distributed) n/R cpus.  These sub-processes
+can then use those cpus to further parallelize thier assigned tasks.
+
+3) R > n. (more tasks than cpus)
+In this case we divide up into n sub-processes, and assign a range of R
+to each one, distributing the work evenly, so that they each get R/n(+/-1)
+values to process.
+
+How to we tell the kids what their cpus and tasks are?
+Put it all in the hbos.  Each child process can use it's info to
+figure out which slot belongs to it.
+
+How do we get the info back from the kids?
+save it to a file.
+
+How do we know when the kids are finished?
+SIGCHILD?  Semaphore? SHM? The file exists?
+
+Does the parent need to do work too?
+Yes. However, it could have a separate thread to "watch the kids".
+
+Does this effect CPR?
+Yes.  Now we have to be able to do a restart as a sub-process.
+This is good in that it allows a parent to restart a child process that
+gets lost, but bad because restarting a parent is very complicated.
+You can't just assume process parenthood.
+
+What does the child write to it's results file?
+It's starting parameters (d,r,vals, range of vals to process)
+and the besties it found for those params.
+
+How does the parent use the child info?
+Must be read in and merged with the current info.
+This will produce another "besties" that includes only completed scans,
+and notes the ranges that were completed.  When a whole range is closed
+out, we can produce an updated bestie and either show it to the user,
+or pass it back to parent.
+
+
+File format?
+Frankly, could just use CPR method, but that's overkill.  We don't 
+need the whole world, just the optimal solutions.  So have the kids
+write the besties, with ranges. In binary, so we can just suck it up.
+When the parent gets two adjacent besties, it can meld them.
+When all kids are done, the besties should cover the whole range.
+
+Notification to parent?
+When a child is done, it exits. The parent can see the exit value.
+It can also tell if the process exited or was killed.  Once it knows the
+child is gone, it can check for the results file.  If that's missing,
+it can try restarting (-R) from childs last checkpoint.  If that
+doesn't work, have it start over.
+If it exited successfully, then suck up the results file, validate it,
+and merge it into the rest of the results.
+SIGCHLD is going to get a workout.
+
+
+
+
+Procedure:
+
+before fork:
+
+	enters mrf and determines that forking opportunity exists.
+Calculates number of children to create based on ncpu and r range.
+Creates a slot for each one (array) containing it's assignment and
+room for the results.  Assigns one slot to itself.  Spins off a thread
+to handle the children and starts working on it's task.
+
+during fork:
+	babysitter loops through slots (but one), incrementing an index
+and forking off children.
+
+	if on the parent side of the fork, keep going in loop.
+
+	if on the child side of the fork, note index number and start
+working on task.
+
+after the fork:
+	When babysitter finishes forking kids, it sits and waits for
+any of them to quit.  When it gets a SIGCHLD, it determines the cause,
+and either retrieves the results or attempts to restart the process.
+When all kids (including the other thread in this process) have completed,
+it collates the results and then does it's own exit processing, either
+back to another process or up the function call stack.
+
+Task identification.   Each task is of the form:
+"At level R you process values n-m (inclusive)."  The hbos from the
+fork should contain all the sub-info needed already.  If the parent
+creates an array of task slots, one for each subprocess, then all the
+child needs to know is it's slot number and it can set rval, rhi and rlo
+accordingly and go to work by just picking up the main loop in mrf().
+
+That means each child must stash it's task info in the hbos to save it
+on CPR.  Not really a problem.
+However, now the parent has to also save the whole array for CPR.
+And some children can also be parents, so they have to do both.
+So the process has to know what kind of process is it.
+
+	child task data:
+		int level; // recursion depth, really
+		int rlo;	// starting r value
+		int rhi;	// ending r value
+		int idnum;	// which child am i
+
+Add to besties:
+	for each R slot, a pair of variables indicaiting the processed
+range.  If the whole thing was done (nothing left), then can set to
+some special value.
+	struct _vals {
+		int score
+		int rhi
+		int rlo
+		int vals[]
+		int state; // ?? for "ownership" issues. 
+	}	
+
+
+
+
+
+Triagnle numbers
+ sum of first n numbers is (n*(n+1))/2
+
+Combinations
+nCr = n!/(r!*((n-r)!))
+
+combinations with repetitions
+
+nCRr = (n+r-1)! / (r! * ((n-1)!))
+
+with D, R, how many different ways to throw are there?
+well, we have to add the case of missing the dart board, so
+score darts(d,r) =  n=r+1, r=d   ( r+1 + d -1)! / (d! * ( (r+1-1)!))
+	= (r+d)! / (d! * r!)
+
+try a couple and see....
+
+need a factorial function.
+should really use a LUT, since we need them repeatedly.
+
+So what does having the throw combos give us?
+A handle on how expensive it is to score a particular set of R values.
+
+
+Is there an incremental way we can add a region value?
+
+given score{D, R}, can we use that to calculate score{D, R+1}?
+Assuming val[R] < val[R+1].
+
+Ok, well, what we can do is use score{D-1, R}, and then go to score{D, R+1}.
+
+How?
+
+well, iterate through all the D-1 possible scores, and add val[R+1].
+
+Can we hash the R values somehow? hmm... good question....
+it would be nice to have an index or easy comparitor for a set of Rs.
+I don' tthink this is going to be feasible, given the huge number of combos.
+
+
+So lets say we have for a particular set d, r, s[]=scores{d,r} and g=score(d,r).
+All right?  now we want to add a region r+1 and see what happens.
+
+First, what are the bounds on the value of r+1?  well, it must be >r.
+Good. Also, it doesn't help if it is > g. 
+So r < r+1 <= g.  Good.
+
+I think we can do something like this....
+
+scores{d,r+1} = s[] + ( scores{d-1,r}+val[r+1]}) hmm... not complete.
+Nope. OK, let me think....
+
+We need not only scores{d-1,r} but scores for all 1..d, r.
+
+scores{d, r+1} = sum(i=1..d, scores{i,r}+val{r+1})
+
+even that isn't enough, because we also have to do the cases where
+two darts are in r+1.  That adds a few cases.  But we can handle that, right?
+
+
+Can we reverse the operation?
+can we find scores{d, r-1}, given scores{d, r}?
+Not easily.  We'd have to keep the count of each score (ok).
+Iterate through all the possible scores using r+1 and decrement them.
+
+It could be done, but it would not be very efficient...
+
+Just stack them up then... maybe.
+recursive... why not.
+
+
+given D, R,
+	get scores for 1..D, 1..R.
+use lower ones to calculate higher ones.
+Then what? then.. iterate Rs, recursively. I think.
+
+given scores{d,r} can we use that to find scores{d+1,r}?
+Yes, I think so, just run through vals adding to scores.  Should work, right?
+right.
+
+So we recurse and iterate, both ways. right? right.
+
+recurse down or up? good question...
+
+and d first or r first?  another good question.
+
+I think... r in the outer loop, and d in the inner one.
+
+Maybe.
+
+for d,r+1 we need...
+	d, r
+	d-1, r
+	d-.., r
+
+so, keep those from last time... sure.
+	and find 1, r+1,
+		...d, r+1
+
+called with D, R, gap, {state infor from last call}
+	find upper and lower bound for R+1-> uR,lR
+	for (r = lR to uR)
+		find state info for D, r
+		call with D, R+1, newgap, new state info
+		save best[d,r] - one swell foop
+
+interesting, dudes.
+	state info includes the scores for all 1..D of R, with gap info.
+
+Highest score so far is 11K+, so we'd need D 12K arrays PER FRAME.
+That's not going to work, is it?
+Well, we'd have a max of 40 frames... so we could just use a big
+hunk of memory, and give each frame a pointer to a piece of it.
+have to do a lot of copying on push/pop.  Well, push.  That's ok, bcopy
+is fast.
+
+So, we have
+besties[D][R]
+
+hda = stateinfo[R+1].
+
+stateinfo {
+		int d, int r.	/* so we can dump */
+		vals[R+1];	/* the actual "move" */
+		int gap;	/* score really */
+		int scores[D][MAXSCORE];
+	}
+
+withthat, we might not even need to recurse.
+
+So we start with a set of vals[R] - initial state? maybe.
+
+for r in 1...R do
+	we need scores[d-1, a], which we should have unless a=r.
+	if a=r, wht do we do, recurse? maybe.
+
+massively recursive function...
+
+mrf(D, R)
+	if ( R> limits[D]) return;
+
+	lr = bhos[R-1][D].vals[R-1] + 1;
+	ur = bhos[R-1][D].gap;
+
+	for r lr to ur
+		something(D-1, R, r); /* does the scores... */
+
+What happens if you add another dart? 
+
+scores{D, R} from lesser scores...
+	+= add val[R] to all in scores{D-1, R}
+	+= add scores{D, R-1}
+	+= val[R]
+
+so try that.
+
+
+
+Examples:
+base case, 1 dart, 1 region.  move up to D=2, R=2, val=2.
+scores = [1];
+
+now, we add a region.
+scores = [1, 2]
+
+	if (d == 1) scores[val[r]]++;
+
+now, add a dart {1,2} -> {2, 2}
+scores =[ 1, 2, 3, 4 ]
+	for i=0 to maxv; if scores[i] then scores[i+val[r]]++;
+
+done? i guess.
+
+now do D=2, R=3, with val = 3
+
+we need {1,3}
+	use {1,2}
+	[1,2,3]
+
+great. now use 1,3 to find 2,3
+	1 2 3 4 5 6 gap = 7
+
+now do it again with 2,3/4
+	1,3 = [ 1, 2, 4] gap = 3
+move to 2,3
+	1 2 4 5 6 8 gap = 3 /* no good */
+
+Try it with 3 darts and 4? regions.
+
+s[1][1] =  1
+
+Ok, now, we call mrf(3, 1, 1), limit=4.
+
+/* 1..1 */
+mrf(3,1,1) v=1
+	mrf(2,1,1) v=1
+		mrf(1,1,1) = s=1, g=1 v=1
+	s = 1,2	g=3 v=1
+s=1,2,3 g=4 v=1
+
+/* 2..4 */
+mrf(3,2,2) v=1,2
+	mrf(2,2,2) v=1,2
+		mrf(1,2,2) s=1,2 g=3 v=1,2
+	s=1,2,3,4 g=5 v=1,2
+s=1,2,3,4,5,6 g=7 v=1,2
+
+/* 3..5 */
+mrf(3,3,3) v=1,2,3
+	mrf(2,3,3) v= 1,2,3
+		mrf(1,3,3) v=1,2,3 s=1,2,3 g=4
+	s=1,2,3,4,5,6 g=7
+s=1,2,3,4,5,6,7,8,9 g=10
+
+increment r val
+	mrf(2,3,4) v=1,2,4
+		mrf(1,3,4) v=1,2,4 s=1,2,4, g=3
+	s=1,2, 4,5,6,8 g=3
+s=1,2,4,5,6,8,9,10,12 g=3
+v>gap, quit.
+
+mrf(3,2,3) v = 1,3
+	mfr(2,2,3) v=1,3
+		mrf(1,2,3) v=1,3 s=1,3 g=2
+	s=1,3,4,6 g=2
+s=1,3,4,6,7,9 g=2  
+
+We are missing some scores.  Yes, we are.
+need scores for {3,1}?
+s=1,2,3 g=4 v=1
+
+
+
+
+//*  bugs. *8//
+
+
+look at 3,4.  Sure, why not.
+
+Lets say we are trying to do the first value of 3,3.
+
+we have so far:
+
+d  r  gap	vals 		scores
+0  0  2		1     		1
+0  1  3		1,2   		1,2
+0  2  4		1,2,3		1,2,3
+
+1  0  3		1		1,2
+1  1  5		1,2		1,2,3,4
+1  2  9		1,3,4		1,2,3,4,5,6,7,8,9,10,11,12
+1  3  ?
+
+2  0   
+2  1  7		1,2		1,2,3,4,5,6
+2  2
+2  3
+
