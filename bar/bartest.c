@@ -16,7 +16,6 @@
 /*
 	TODO:
 test_bardup
-barwrite, barread
 CLI options processing
 change to test harness design
 more specific test cases (overlap, d=s, word and capacity boundaries.

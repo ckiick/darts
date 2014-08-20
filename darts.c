@@ -36,9 +36,12 @@
 #include <strings.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include "bar.h"
 
-#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 #include <assert.h>
@@ -78,14 +81,17 @@ long	dbg = DBG_NONE;
 uint64_t	hashval = 1000000;
 uint64_t	stop = 0;
 char 		*outfile = NULL;
-uint64_t	cpval = 20000000;
-char		*cpstr = NULL;
+uint64_t	cpval = 0;
+char		*cpfn = NULL;
 
+#define	CPFN	"darts.cpr"
 #define MAXR	40
 #define	MAXVAL	(12*1024)
 #define	MAXD	6
 
-int limits[6] = { 40, 40, 40, 30, 20, 10 };
+int restarting = 0;
+
+int def_limits[MAXD] = { 40, 40, 40, 30, 20, 10 };
 
 typedef struct _sc {
 	bar_t s;		/* bit array. */
@@ -97,21 +103,28 @@ typedef struct _sc {
 typedef struct _plane {
 	sc_t sc[MAXD];		/* one set for each number of darts */
 	int rval;		/* value of region for this plane. */
+	int rlow;		/* iteration start value */
+	int rhi;		/* iteration limit */
 } plane_t;
-
-typedef struct _block {
-	plane_t pl[MAXR+1];	/* one for each number of regions. */
-} block_t;
 
 typedef struct _vals {
 	int score;		/* where is the first gap? */
 	int vals[MAXR+1];	/* value of each region. */
 } vals_t;
 
-vals_t vals;			/* current set of r values. */
-vals_t besties[MAXD][MAXR+1];	/* best values for each r,d comb. */
+typedef struct _block {
+	plane_t pl[MAXR+1];	/* one for each number of regions. */
+	vals_t vals;			/* current set of r values. */
+	vals_t besties[MAXD][MAXR+1];	/* best values for each r,d comb. */
+	int limits[MAXD];
+	int D;		// number of darts
+	int R;		// number of regions
+	int d;		// current d value
+	int r;		// current value of r 
+	unsigned long iters;	// iteration count
+} block_t;
 
-/* global huge block of stuff */
+/* global huge block of stuff. EVERYTHING is stored here. */
 block_t hbos;
 
 
@@ -130,7 +143,7 @@ block_t hbos;
  * the score (S=d+1).  Now we can calculate solutions for any value of d for
  * r=1.  Conversely, with 1 dart it is easy to add another region with
  * value v, by simply adding v to the set of numbers reached and checking 
- * for a change in the score/gap.   So we can contruct any d=1,r=m or
+ * for a change in the score/gap.   So we can construct any d=1,r=m or
  * d=n,r=1.
  * For d=n,r=m, we can construct data that is a set of values for
  * each region and the numbers it can reach with the given number of darts.
@@ -150,8 +163,11 @@ block_t hbos;
  * {B(d-1,r)}.
  *       for each pair v,b, v in {V(r)} and b in {B(d-1,r)}
  *		{B(d,r} += v+b;
- * So to get {B(d,r)} we need {B(d-1,r)} and {V(r)}.
- * This can be found by recursing until d=1 is reached, which from above
+ * However, with an extra dart there are now more combinations that
+ * can be made. So we have to include all of them that can be done with
+ * the extra dart and NOT the extra region. This is the set {B(d,r-1)}.
+ * So to get {B(d,r)} we need {B(d-1,r)} and {B(d,r-1)}.
+ * The first can be found by recursing until d=1 is reached, which from above
  * is defined as {B(1,r)} = {V(r)}.
  * Now that we know how to find S(d,r) given {V(r)}, finding the optimal
  * solution requires exploring all possible sets of {V(r)}.  Fortunately,
@@ -188,6 +204,7 @@ block_t hbos;
  * Note that if the sets {B} are represented as bit-vectors, then
  * "Adding" two sets becomes a bit-wise OR operation, and the operation
  * of "add value v to all values in B" becomes a SHIFT+OR (X={B}|({B}<<v)).
+ * Much faster than looping over arrays of integers.
  */
 
 void
@@ -198,7 +215,6 @@ dumpscore(sc_t score)
 	for (i=1; i <= score.maxval +1; i++) {
 		if (barget(&(score.s),i)) printf("%d ",i);
 	}
-//	printf("\n");
 }
 
 void
@@ -209,7 +225,6 @@ dumpframe(int r, int D)
 
 	f = &(hbos.pl[r]);
 
-//	printf("frame %d \n", r);
 	for (d =0; d < D; d++) {
 		printf("d=%d ", d+1);
 		dumpscore(f->sc[d]);
@@ -222,11 +237,11 @@ void
 dumpvals(int R)
 {
 	int i;
-	printf("score=%d:[r=%d] ", vals.score, R+1);
+	printf("score=%d:[r=%d] ", hbos.vals.score, R+1);
 	for (i = 1; i < R; i++) {
-		printf("%d, ", vals.vals[i]);
+		printf("%d, ", hbos.vals.vals[i]);
 	}
-	printf("%d\n", vals.vals[i]);
+	printf("%d\n", hbos.vals.vals[i]);
 }
 
 void
@@ -239,13 +254,84 @@ dumpmore(int d, int r)
 
 	printf("O[d=%d,r=%d]:S=%d,V={", d+1, r+1, scores->gap);
 	for (i = 0; i < r+1; i++) {
-		printf("%d ", vals.vals[i]);
+		printf("%d ", hbos.vals.vals[i]);
 	}
 	printf("},max=%d,B={", scores->maxval);
 	for (i=1; i <= scores->maxval +1; i++) {
 		if (barget(&(scores->s),i)) printf("%d ",i);
 	}
 	printf("}\n");
+}
+
+int
+checkpoint(char *fn)
+{
+	int i,j;
+	int fd;
+	size_t wrv;
+	int brv;
+
+	if (fn == NULL) return -1;
+
+	fd = open(fn, O_WRONLY|O_CREAT|O_TRUNC, 0660);
+	if (fd < 0) {
+		perror("checkpoint open");
+		return -2;
+	}
+
+	wrv = write(fd, &hbos, sizeof(block_t));
+	if (wrv != sizeof(block_t)) {
+		printf("failed to write hbos.\n");
+		close(fd);
+		return -3;
+	}
+	for (i = 0; i <= MAXR; i++) {
+		for (j = 0; j < MAXD; j++) {
+			brv = barwrite(&(hbos.pl[i].sc[j].s), fd);
+			if (brv < 0) {
+				printf("problems writing bar %d,%d, aborting.\n", i,j);
+				close(fd);
+				return -4;
+			}
+		}
+	}
+	close(fd);
+	return 0;
+}
+
+int restart(char *fn)
+{
+	int i,j;
+	int fd;
+	size_t rrv;
+	int brv;
+
+	if (fn == NULL) return -1;
+
+	fd = open(fn, O_RDONLY);
+	if (fd < 0) {
+		perror("restart open");
+		return -2;
+	}
+	rrv = read(fd, &hbos, sizeof(block_t));
+	if (rrv != sizeof(block_t)) {
+		printf("trouble reading hbos.\n");
+		close(fd);
+		return -3;
+	}
+	for (i = 0; i <= MAXR; i++) {
+		for (j = 0; j < MAXD; j++) {
+			hbos.pl[i].sc[j].s = nobar;
+			brv = barread(&(hbos.pl[i].sc[j].s), fd);
+			if (brv < 0) {
+				printf("problems reading bar %d,%d, aborting.\n", i,j);
+				close(fd);
+				return -4;
+			}
+		}
+	}
+	close(fd);
+	return 0;
 }
 
 /* at depth r, use val to fill in the frame for r, for all 1...D darts
@@ -257,8 +343,6 @@ fillin(int d, int r, int val)
 {
 	sc_t *scores;
 	sc_t *dsc;
-	int i;
-	int mv;
 	int rv;
 
 	ASSERT((d >=0)&&(r>=0));
@@ -286,7 +370,6 @@ DBG(DBG_FILLIN2, ("copied d=%d r=%d ", d+1, r-1+1)) {
 				scores->gap = barlen(&(scores->s));
 				barclr(&(scores->s), scores->gap);
 			}
-//			scores->maxval=val;
 		}
 		DBG(DBG_FILLIN, ("base for d=%d,r=%d,gap=%d\n", d+1,r+1, scores->gap));
 	} else {
@@ -301,7 +384,7 @@ DBG(DBG_FILLIN2, ("copied (only) d=%d r=%d ", d-1+1, r+1)) {
 }
 		barlsle(&(scores->s), &(scores->s), val);
 		baror(&(scores->s), &(dsc->s), &(scores->s));
-		scores->gap = dsc->gap;
+//		scores->gap = dsc->gap;
 		scores->maxval = dsc->maxval + val;
 DBG(DBG_FILLIN2, ("added val %d ", val)) {
 	dumpscore(*dsc);
@@ -323,25 +406,20 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	printf("\n");
 }
 		/* now find the new gap. */
-//		rv = barfnz(&(scores->s), scores->gap - 2);
 		rv = barfnz(&(scores->s),1);
 		if (rv == -1) {
-if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
 			/* add a 0 at the end. */
 			scores->gap = barlen(&(scores->s));
 			barclr(&(scores->s), scores->gap);
-//			scores->gap++;
-//			printf("OOPS! NO GAP\n");
-//			exit(3);
 		} else {
 			scores->gap = rv;
 		}
 		DBG(DBG_FILLIN, ("for d=%d,r=%d,maxval=%d gap=%d \n", d+1,r+1, scores->maxval, scores->gap));
 	}
 	/* update best scores. */
-	if (scores->gap > besties[d][r].score) {
-		besties[d][r] = vals;
-		besties[d][r].score = scores->gap;
+	if (scores->gap > hbos.besties[d][r].score) {
+		hbos.besties[d][r] = hbos.vals;
+		hbos.besties[d][r].score = scores->gap;
 		DBG(DBG_PRO, ("new best for d=%d,r=%d is %d\n", d+1, r+1, scores->gap));
 		DBG(DBG_DUMPV, ("\tvals ")) {
 			dumpvals(r);
@@ -358,43 +436,69 @@ if (scores->gap >= scores->s.numbits) printf("gapgrow\n");
 	}
 }
 
+
 /* massively recursive function. Well, maybe not so massive. */
 void
-mrf(int d, int r)
+mrf(int depth)
 {
 	sc_t *scores;
-	int lv, uv, cv;
 
-	DBG(DBG_MRF, ("-> called with d=%d r=%d\n", d+1, r+1));
-	if ((d < 0) || (r < 0)) return;
-	if ((d == 0) && (r == 0)) return;
-	if (r >= limits[d]) return;	/* important stop condition. */
+	if (restarting && depth < hbos.r) {
+		DBG(DBG_MRF, ("-> restarting depth=%d, r=%d\n", depth, hbos.r+1));
+	} else {
 
-	if (r == 0) {
-		lv = uv = 1;
-	} else  {
-		lv = hbos.pl[r-1].rval + 1;
-		uv = hbos.pl[r-1].sc[d].gap;
+		DBG(DBG_MRF, ("-> called with d=%d r=%d\n", hbos.d+1, hbos.r+1));
+		if ((hbos.d < 0) || (hbos.r < 0)) return;
+		if ((hbos.d == 0) && (hbos.r == 0)) return;
+		if (hbos.r >= hbos.limits[hbos.d]) return;	/* important stop condition. */
+
+		if (hbos.r == 0) {
+			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r].rhi = 1;
+		} else  {
+			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r-1].rval + 1;
+			hbos.pl[hbos.r].rhi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
+		}
+		hbos.pl[hbos.r].rval = hbos.pl[hbos.r].rlow;
+
+		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].rlow, hbos.pl[hbos.r].rhi));
 	}
 
-	DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", r+1, lv, uv));
 
-	for (cv = lv; cv <= uv; cv++) {
-		vals.vals[r] = cv;
-		hbos.pl[r].rval = cv;
-		fillin(d, r, cv);
-		DBG(DBG_DUMPF, ("frame %d\n",r )) {
-			dumpframe(r,d+1);
+	for (/*already set*/; hbos.pl[hbos.r].rval <= hbos.pl[hbos.r].rhi;
+	    hbos.pl[hbos.r].rval++) {
+		/* here is where we CPR */
+		if ((cpval > 0) && (hbos.iters > 0) && ( (hbos.iters % cpval)==0) && (! restarting)) {
+			checkpoint(CPFN);
 		}
-		if (r+1 < limits[d]) {
-			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", d+1, r+1+1, cv));
-			mrf(d, r + 1);
+		if (restarting) {
+			if (depth < hbos.r) {
+				mrf(depth+1);
+			} else {
+				restarting = 0;
+				/* back to normal */
+			}
+		} else {
+			hbos.vals.vals[hbos.r] = hbos.pl[hbos.r].rval;
+			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].rval);
+			DBG(DBG_DUMPF, ("frame %d\n",hbos.r )) {
+				dumpframe(hbos.r,hbos.d+1);
+			}
+			if (hbos.r+1 >= hbos.limits[hbos.d]) {
+				continue;
+			}
+			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].rval));
+			hbos.r++;
+//			mrf(hbos.d, hbos.r);
+			mrf(depth+1);
 		}
+		hbos.r--;
+		hbos.iters++;
+
 	}
 	DBG(DBG_DUMPV, ("current vals ")) {
-		dumpvals(r);
+		dumpvals(hbos.r);
 	}
-	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", d+1, r+1));
+	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
 }
 
 /* at the end, print out everything we found. */
@@ -405,10 +509,10 @@ dumpscores(int D)
 
 	printf("best scores found this run:\n");
 	for (d=0; d < D; d++) {
-		for (r = 0; r < limits[d]; r++) {
-			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, besties[d][r].score);
+		for (r = 0; r < hbos.limits[d]; r++) {
+			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, hbos.besties[d][r].score);
 			for (i=0; i <= r; i++) {
-				printf("%d,", besties[d][r].vals[i]);
+				printf("%d,", hbos.besties[d][r].vals[i]);
 			}
 			printf("\n");
 		}
@@ -422,11 +526,17 @@ initstuff(int D, int R)
 
 	DBG(DBG_INIT, ("zeroing out hbos %d bytes\n", sizeof(block_t)));
 	bzero(&hbos, sizeof(block_t));
+/*
 	DBG(DBG_INIT, ("zeroing out vals %d bytes\n", sizeof(vals_t)));
-	bzero(&vals, sizeof(vals_t));
+	bzero(vals, sizeof(vals_t));
 	DBG(DBG_INIT, ("zeroing out besties %d bytes\n", sizeof(besties)));
 	bzero(besties, sizeof(besties));
+*/
 
+	hbos.D = D;
+	hbos.R = R;
+	hbos.r = 0;
+	hbos.d = hbos.D;
 	/* set the degenerate case up first.
 	 * d=1, r=1 can only have a val of 1 and a score/gap of 2.
 	 * also, there must always be a val=1.
@@ -437,16 +547,19 @@ initstuff(int D, int R)
 	hbos.pl[0].sc[0].maxval = 1;
 	hbos.pl[0].rval = 1;
 
-	besties[0][0].score = 2;
-	besties[0][0].vals[0] = 1;
+	hbos.besties[0][0].score = 2;
+	hbos.besties[0][0].vals[0] = 1;
 
 	DBG(DBG_DUMPF, ("init frame\n")) {
 		dumpscore(hbos.pl[0].sc[0]);
 		printf("\n");
 	}
-	for( i = 0; i < D; i++) {
-		if (limits[i] > R) {
-			limits[i] = R;
+
+	for( i = 0; i < MAXD; i++) {
+		if (def_limits[i] > R) {
+			hbos.limits[i] = R;
+		} else {
+			hbos.limits[i] = def_limits[i];
 		}
 	}
 	/* might be good enough for now. */
@@ -462,16 +575,17 @@ usage(char *me)
 	fprintf(stderr, "\t-v: verbose. use multiple time for more.\n"
 		"\t-q: quiet. turns off verbose.\n"
 		"\t-t: display execution time.\n"
-		"\t-c: show eval counts\n"
+		"\t-c: show iteration counts\n"
 		"\t-V: display version number.\n"
-		"\t-h: show hash mark every interval evals.\n"
-		"\t-H interval: st the hash inteval (default 1,000,000)\n"
+		"\t-h: show hash mark every interval iterations.\n"
+		"\t-H interval: set the hash inteval (default 1,000,000)\n"
 		"\t-b: show best answers as found (progress report)\n"
 		"\t-D value: set dbg value directly.\n"
 		"\t-O file: direct output to file instead of stdout\n"
-		"\t-l limit: stop after limit evals\n"
-		"\t-R string: use string to restart after checkpoint.\n"
-		"\t-C interval: enable checkpointing. Auto checkpoint every interval evals.\n"
+		"\t-n cpus: fork n copies to work in parallel.\n"
+		"\t-l limit: stop after limit iterations (checkpoint)\n"
+		"\t-R file_name: use file to restart after checkpoint.\n"
+		"\t-C interval: save checkpoint file every interval iterations.\n"
 	);
 }
 
@@ -513,7 +627,8 @@ main(int argc, char **argv)
 			stop = strtol(optarg, NULL, 0);
 			break;
 		case 'R':
-			cpstr = optarg;
+			cpfn = optarg;
+			restarting = 1;
 			break;
 		case 'C':
 //			dbg |= DBG_CPR;
@@ -560,7 +675,11 @@ main(int argc, char **argv)
 
 	initstuff(D, R);
 
-	mrf(D-1, 0);
+	if (restarting) {
+	} else {
+//		mrf(D-1, 0);
+		mrf(0);
+	}
 
 	dumpscores(D);
 

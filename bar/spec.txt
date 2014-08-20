@@ -360,9 +360,10 @@ to the same structure.
 
 Testing
 =======
-A short test suite is included in bartest.c. Compile and link it with
+A mini test suite is included in bartest.c. Compile and link it with
 the bar.c file.  When run with no options, it will only show output if
 there is an error.  The return value will be 0 if all tests pass.
+If a test fails the program will abort.
 To see more output, use one or more -v flags.  Use -h to see all the options
 supported.
 
@@ -373,9 +374,10 @@ If needed, the bar.c file can be compiled with DEBUG defined, and
 various informational messages will be printed by the bar routines.
 This can add up to a lot of output if the bar routines are heavily
 used.
+
 With DEBUG defined the barcheck routine is also made visible, and is applied
 to all bars on input or output of a bar routine. To use barcheck, pass
 in a pointer to a bar_t, just like the other routines. If the bar_t is
 valid, it will return 0.  If there is a problem with the bar it will return
-a non-zero value and print a debug message.
+a non-zero value and maybe print a debug message.
 

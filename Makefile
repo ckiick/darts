@@ -5,7 +5,7 @@ darts:	darts.c
 	gcc -O5 darts.c ./bar/bar.c -o darts -I./bar
 
 debug:
-	gcc -g -ggdb darts.c ./bar/bar.c -o darts -I./bar
+	gcc -DDEBUG=1 -g -ggdb darts.c ./bar/bar.c -o darts -I./bar
 
 prof:	darts
 	rm -f gmon.out mon.out darts.gc*

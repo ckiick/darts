@@ -980,7 +980,8 @@ int barread(bar_t *bar, int fd)
 
 
 #ifdef NOTDEF
-almost done.
-int barwrite(bar_t *bar, int fd);
-int barread(bar_t *bar, int fd);
+possible future interfaces
+barcat
+barpack, barunpack
+barrev (bartac)
 #endif

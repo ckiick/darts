@@ -54,9 +54,8 @@ int barswap(bar_t *dest, bar_t *src);
 int barwrite(bar_t *bar, int fd);
 int barread(bar_t *bar, int fd);
 
-/* missing features? */
-/*
-	DEBUG barcheck() - validation check on bar.
-*/
+#ifdef DEBUG
+int barcheck(bar_t *bar);
+#endif
 
 #endif /* __BAR_H */
