@@ -34,10 +34,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
-#include <sys/time.h>
+#include <sys/time.h>		// hrtime
 #include <unistd.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <sys/stat.h>		// open
+#include <fcntl.h>		// open
 
 #include "bar.h"
 
@@ -61,6 +61,7 @@
 #define DBG_TIME	0x00001000
 #define	DBG_PRO		0x00002000
 #define	DBG_HASH	0x00004000
+#define DBG_CPR		0x00008000
 #define	DBG_NONE	0x80000000
 #define DBG_ALL		0x7FFFFFFF
 
@@ -78,13 +79,25 @@ long	dbg = DBG_NONE;
 #define ASSERT(X)
 #endif
 
+#define	CPFN	"darts.cpr"
+
+#if !defined(__sun)
+typedef uint64_t hrtime_t
+hrtime_t gethrtime()
+{
+	struct timespec ts;
+        (void)clock_gettime(CLOCK_REALTIME, &ts);
+        return ((uint64_t)ts.tv_sec * 1000000000LU + (uint64_t)ts.tv_nsec);
+}
+#endif
+
 uint64_t	hashval = 1000000;
 uint64_t	stop = 0;
-char 		*outfile = NULL;
+// char 		*outfile = NULL;
 uint64_t	cpval = 0;
 char		*cpfn = NULL;
+char		def_cpfn[] = CPFN;
 
-#define	CPFN	"darts.cpr"
 #define MAXR	40
 #define	MAXVAL	(12*1024)
 #define	MAXD	6
@@ -122,11 +135,13 @@ typedef struct _block {
 	int d;		// current d value
 	int r;		// current value of r 
 	unsigned long iters;	// iteration count
+	hrtime_t begin;		// start of iterations
+	hrtime_t end;		// when we quit.
+	hrtime_t runtime;	// total runtime.
 } block_t;
 
 /* global huge block of stuff. EVERYTHING is stored here. */
 block_t hbos;
-
 
 /*
  * a few semi-helpful notes.
@@ -279,6 +294,15 @@ checkpoint(char *fn)
 		return -2;
 	}
 
+	/* minor cleanup */
+	if (dbg & DBG_TIME) {
+		hrtime_t now;
+
+		now = gethrtime();
+		hbos.runtime += (now - hbos.begin);
+		hbos.begin = hbos.end = 0;
+	}
+
 	wrv = write(fd, &hbos, sizeof(block_t));
 	if (wrv != sizeof(block_t)) {
 		printf("failed to write hbos.\n");
@@ -331,6 +355,12 @@ int restart(char *fn)
 		}
 	}
 	close(fd);
+
+	/* restart thingy. */
+	if (dbg & DBG_TIME) {
+		hbos.begin = gethrtime();
+	}
+	printf("restarting from checkpoint %s\n", cpfn);
 	return 0;
 }
 
@@ -443,7 +473,7 @@ mrf(int depth)
 {
 	sc_t *scores;
 
-	if (restarting && depth < hbos.r) {
+	if (restarting && (depth < hbos.r)) {
 		DBG(DBG_MRF, ("-> restarting depth=%d, r=%d\n", depth, hbos.r+1));
 	} else {
 
@@ -468,9 +498,25 @@ mrf(int depth)
 	    hbos.pl[hbos.r].rval++) {
 		/* here is where we CPR */
 		if ((cpval > 0) && (hbos.iters > 0) && ( (hbos.iters % cpval)==0) && (! restarting)) {
-			checkpoint(CPFN);
+			printf("checkpoint at %d iterations (depth=%d)\n", hbos.iters, depth);
+			checkpoint(cpfn);
+		}
+#ifdef REDUNDANT
+		if ((stop > 0) && (hbos.iters >= stop)) {
+			printf("checkpoint and stop at %d iterations(depth=%d)\n", hbos.iters, depth);
+			checkpoint(cpfN);
+			exit(1);
+		}
+#endif
+		if ((stop > 0) && (!restarting) && (hbos.iters >= stop)) {
+			printf("checkpoint and stop at %d iterations(depth=%d)\n", hbos.iters, depth);
+			checkpoint(cpfn);
+			exit(0);
 		}
 		if (restarting) {
+			if (hbos.iters > stop) {
+				stop = 0;
+			}
 			if (depth < hbos.r) {
 				mrf(depth+1);
 			} else {
@@ -488,16 +534,21 @@ mrf(int depth)
 			}
 			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].rval));
 			hbos.r++;
-//			mrf(hbos.d, hbos.r);
 			mrf(depth+1);
 		}
 		hbos.r--;
 		hbos.iters++;
+		if (dbg & DBG_HASH) {
+			if ((hbos.iters % hashval) == 0) {
+				printf("#");
+			}
+		}
 
 	}
 	DBG(DBG_DUMPV, ("current vals ")) {
 		dumpvals(hbos.r);
 	}
+	DBG(DBG_CTR, ("performed %d iterations\n", hbos.iters));
 	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
 }
 
@@ -533,10 +584,10 @@ initstuff(int D, int R)
 	bzero(besties, sizeof(besties));
 */
 
-	hbos.D = D;
+	hbos.D = D;	/* big-D and big-R are not 0-based. */
 	hbos.R = R;
 	hbos.r = 0;
-	hbos.d = hbos.D;
+	hbos.d = hbos.D - 1;
 	/* set the degenerate case up first.
 	 * d=1, r=1 can only have a val of 1 and a score/gap of 2.
 	 * also, there must always be a val=1.
@@ -570,21 +621,22 @@ initstuff(int D, int R)
 void
 usage(char *me)
 {
-	fprintf(stderr, "usage: %s [-vqtcVhbD] [-H interval] [-O outfile]"
-		" [-l limit] [-D val] Darts Regions\n", me);
+	fprintf(stderr, "usage: %s [-vqtcVhbR] [-H interval] [-C cnt]"
+		" [-l limit] [-F file ] [-D val] Darts Regions\n", me);
 	fprintf(stderr, "\t-v: verbose. use multiple time for more.\n"
 		"\t-q: quiet. turns off verbose.\n"
 		"\t-t: display execution time.\n"
 		"\t-c: show iteration counts\n"
 		"\t-V: display version number.\n"
 		"\t-h: show hash mark every interval iterations.\n"
-		"\t-H interval: set the hash inteval (default 1,000,000)\n"
+		"\t-H interval: set the hash interval (default 1,000,000)\n"
 		"\t-b: show best answers as found (progress report)\n"
 		"\t-D value: set dbg value directly.\n"
-		"\t-O file: direct output to file instead of stdout\n"
+//		"\t-O file: direct output to file instead of stdout\n"
 		"\t-n cpus: fork n copies to work in parallel.\n"
 		"\t-l limit: stop after limit iterations (checkpoint)\n"
-		"\t-R file_name: use file to restart after checkpoint.\n"
+		"\t-R restart execution from checkpoint file.\n"
+		"\t-F filename: use filename for checkpoint file.\n"
 		"\t-C interval: save checkpoint file every interval iterations.\n"
 	);
 }
@@ -596,42 +648,53 @@ main(int argc, char **argv)
 	char c;
 	int verbose = 0;
 
-	while ((c = getopt(argc, argv, "vqtcVhH:bD:O:l:R:C:")) != -1) {
+	while ((c = getopt(argc, argv, "vqtcVhH:bD:l:RF:C:")) != -1) {
 		switch(c) {
-		case 'v':	verbose++;
+		case 'v':
+			verbose++;
 			break;
-		case 'q':	verbose = -1;
+		case 'q':	
+			verbose = -1;
 			break;
-		case 't':	dbg |= DBG_TIME;
+		case 't':
+			dbg |= DBG_TIME;
 			break;
-		case 'c':	dbg |= DBG_CTR;
+		case 'c':
+			dbg |= DBG_CTR;
 			break;
-		case 'V':	dbg |= DBG_VER;
+		case 'V':
+			dbg |= DBG_VER;
 			break;
-		case 'h':	dbg |= DBG_HASH;
+		case 'h':
+			dbg |= DBG_HASH;
 			break;
 		case 'H':
 			hashval = strtol(optarg, NULL, 0);
 			break;
-		case 'b':	dbg |= DBG_PRO;
+		case 'b':
+			dbg |= DBG_PRO;
 			break;
 		case 'D':
 			dbg = strtol(optarg, NULL, 0);
 			dbg |= DBG_DBG;
 			break;
+#ifdef NOTDEF
 		case 'O':
 			outfile = optarg;
 			break;
+#endif
 		case 'l':
-//			dbg |= DBG_STOP;
+			dbg |= DBG_CPR;
 			stop = strtol(optarg, NULL, 0);
 			break;
-		case 'R':
+		case 'F':
 			cpfn = optarg;
+			break;
+		case 'R':
 			restarting = 1;
 			break;
 		case 'C':
-//			dbg |= DBG_CPR;
+			dbg |= DBG_CPR;
 			cpval = strtol(optarg, NULL, 0);
 			break;
 		case '?':
@@ -642,23 +705,31 @@ main(int argc, char **argv)
 		}
 	}
 
-	argc -= optind;
-	if (argc != 2) {
-		fprintf(stderr, "invalid number of arguments %d\n",
-			argc);
-		usage(argv[0]);
-		return 1;
+	/* on restart, ignore D,R on cmd line. use from file. */
+	if (! restarting ) {
+		argc -= optind;
+		if (argc != 2) {
+			fprintf(stderr, "invalid number of arguments %d\n",
+				argc);
+			usage(argv[0]);
+			return 1;
+		}
+		D = atoi(argv[optind]);
+		if (D <= 0) {
+			fprintf(stderr, "bad darts value %s\n", argv[1]);
+			return 2;
+		}
+		R = atoi(argv[optind + 1]);
+		if (R <= 0) {
+			fprintf(stderr, "bad region value %s\n", argv[2]);
+			return 3;
+		}
 	}
-	D = atoi(argv[optind]);
-	if (D <= 0) {
-		fprintf(stderr, "bad darts value %s\n", argv[1]);
-		return 2;
+
+	if (cpfn == NULL) {
+		cpfn = def_cpfn;
 	}
-	R = atoi(argv[optind + 1]);
-	if (R <= 0) {
-		fprintf(stderr, "bad region value %s\n", argv[2]);
-		return 3;
-	}
+
 	/* translate verbose into dbg flags. Note fall-through. */
 	switch(verbose) {
 		case 5: dbg = DBG_ALL;
@@ -673,15 +744,44 @@ main(int argc, char **argv)
 	DBG(DBG_DBG, ("debug is 0x%lX\n", dbg));
 	DBG(DBG_VER, ("version %s\n", VER));
 
-	initstuff(D, R);
-
+	/* don't init on restart */
+	if (! restarting) {
+		initstuff(D, R);
+	}
+	
 	if (restarting) {
-	} else {
-//		mrf(D-1, 0);
-		mrf(0);
+		if (restart(cpfn) < 0) {
+			printf("failed to restart. Abort.\n");
+			exit(2);
+		}
 	}
 
-	dumpscores(D);
+	if (dbg & DBG_TIME) {
+		hbos.begin = gethrtime();
+	}
+	mrf(0);
+	if (dbg & DBG_TIME) {
+		hbos.end = gethrtime();
+		hbos.runtime += hbos.end - hbos.begin;
+		hbos.end = hbos.begin = 0;
+	}
+
+	if (dbg & DBG_HASH) {
+		printf("\n");
+	}
+	dumpscores(hbos.D);
+
+	if (dbg & DBG_TIME) {
+		if (dbg & DBG_CTR) {
+			printf("performed %lu iterations in %lu.%lu seconds,"
+			    " %lu iters/sec\n",
+			    hbos.iters, hbos.runtime/1000000000,
+			    hbos.runtime, (hbos.runtime/1000000)%1000,
+			    hbos.iters/(hbos.runtime/1000000000) );
+		} else {
+			printf("elapsed time %llu.%llu seconds.\n", hbos.runtime/1000000000ULL,  (hbos.runtime/1000000)%1000);
+		}
+	}
 
 	return 0;
 }
