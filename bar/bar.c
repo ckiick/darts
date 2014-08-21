@@ -900,7 +900,7 @@ int barread(bar_t *bar, int fd)
 			uint64_t *w64 = (uint64_t *)barbuf;
 			filebits = (word_t)w64[0];
 		} else {
-			uint64_t *w32 = (uint32_t *)barbuf;
+			uint32_t *w32 = (uint32_t *)barbuf;
 			filebits = (word_t)w32[0];
 		}
 	}

@@ -2,13 +2,13 @@
 
 
 darts:	darts.c
-	gcc -O5 darts.c ./bar/bar.c -o darts -I./bar
+	gcc -O5 darts.c ./bar/bar.c -o darts -I./bar -lrt
 
 debug:
-	gcc -DDEBUG=1 -g -ggdb darts.c ./bar/bar.c -o darts -I./bar
+	gcc -DDEBUG=1 -g -ggdb darts.c ./bar/bar.c -o darts -I./bar -lrt
 
 darts.prof:	darts.c
-	gcc -ggdb -g -pg -fprofile-arcs -ftest-coverage -I./bar darts.c ./bar/bar.c -o darts.prof
+	gcc -ggdb -g -pg -fprofile-arcs -ftest-coverage -I./bar darts.c ./bar/bar.c -o darts.prof -lrt
 
 prof:	darts.prof
 	rm -f gmon.out mon.out darts.gc*

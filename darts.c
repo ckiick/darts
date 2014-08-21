@@ -9,7 +9,7 @@
  * darts [-vtchH:bDVql:O:] Darts Regions
  * -v : verbose. use multiple times to be more noisy.
  * -t : time ourselves
- * -c : track number of evals (counter)
+ * -c : track and display number of evals (counter)
  * -h : display hash marks (like a heartbeat)
  * -H interval : how many evals per hash mark (default is 1,000,000).
  * -b : show best scores as they are found (progress report)
@@ -19,7 +19,8 @@
  * -l limit : quit after limit evals.
  * -O file : write debug output to file instead of stdout.
  * -C interval: checkpoint, every interval evals. Also when interrupted.
- * -R string: use string to restart from checkpoint.
+ * -R fname: use file to restart from checkpoint.
+ * -n ncpus: work using ncpus at once.
  */
 
 #define VER	"0.8.5"	// using  bar
@@ -38,6 +39,8 @@
 #include <unistd.h>
 #include <sys/stat.h>		// open
 #include <fcntl.h>		// open
+#include <sys/wait.h>		// wait
+#include <errno.h>		// errno, perror.
 
 #include "bar.h"
 
@@ -65,8 +68,6 @@
 #define	DBG_NONE	0x80000000
 #define DBG_ALL		0x7FFFFFFF
 
-long	dbg = DBG_NONE;
-
 #ifdef DEBUG
 #define	DBG(f, pargs)			\
 	if ((((f) & dbg)==(f)) ? (printf("%s:",__func__) + printf pargs) : 0)
@@ -79,10 +80,8 @@ long	dbg = DBG_NONE;
 #define ASSERT(X)
 #endif
 
-#define	CPFN	"darts.cpr"
-
 #if !defined(__sun)
-typedef uint64_t hrtime_t
+typedef uint64_t hrtime_t;
 hrtime_t gethrtime()
 {
 	struct timespec ts;
@@ -91,20 +90,23 @@ hrtime_t gethrtime()
 }
 #endif
 
-uint64_t	hashval = 1000000;
-uint64_t	stop = 0;
-// char 		*outfile = NULL;
-uint64_t	cpval = 0;
-char		*cpfn = NULL;
-char		def_cpfn[] = CPFN;
-
+#define	CPFN	"darts.cpr"
+#define	FNSZ	32
 #define MAXR	40
 #define	MAXVAL	(12*1024)
 #define	MAXD	6
 
-int restarting = 0;
+const int def_limits[MAXD] = { 40, 40, 40, 30, 20, 10 };
 
-int def_limits[MAXD] = { 40, 40, 40, 30, 20, 10 };
+/* options */
+uint64_t	hashval = 1000000;	// iters per hash
+uint64_t	stop = 0;		// iter limit
+uint64_t	cpval = 0;		// checkpoint interval
+int		checker;		// checkpoint on r level
+char		*cpfn = NULL;		// checkpoint filename
+char		def_cpfn[] = CPFN;	// default cpfn
+int		restarting = 0;		// -R - recover from checkpoint
+long		dbg = DBG_NONE;		// debug/verbose and other flags
 
 typedef struct _sc {
 	bar_t s;		/* bit array. */
@@ -120,24 +122,70 @@ typedef struct _plane {
 	int rhi;		/* iteration limit */
 } plane_t;
 
+/* expanded  */
 typedef struct _vals {
 	int score;		/* where is the first gap? */
 	int vals[MAXR+1];	/* value of each region. */
+	int from;		/* starting value */
+	int to;			/* ending value */
+	int rhi;		/* highest r value */
+	int rlo;		/* lowest r value */
 } vals_t;
+
+
+typedef struct _task {
+	int id;		// who is this for
+	int lvl;	// starting at R lvl
+	int rhi;	// upper
+	int rlo;	// lower
+	int from;	// start here
+	int to;		// end here
+	int cpus;	// how many cpus to use
+	char fname[FNSZ];	// non-suffix name for us
+} task_t;
+
+typedef struct _best {
+	vals_t b[MAXD][MAXR+1];	/* best values for each r,d comb. */
+} best_t;
+
+typedef struct _stats {
+	unsigned long iters;	// iteration count
+	hrtime_t begin;		// start of iterations
+	hrtime_t end;		// when we quit.
+	hrtime_t runtime;	// total runtime.
+	unsigned long checks;	// how many checkpoints
+} stats_t;
+
+typedef struct _result {
+	task_t task;
+	best_t besties;
+	stats_t stats;
+} result_t;
+
+typedef struct _slot {
+	task_t task;
+	int status;
+	pid_t cpid;
+	result_t res;
+} slot_t;
 
 typedef struct _block {
 	plane_t pl[MAXR+1];	/* one for each number of regions. */
 	vals_t vals;			/* current set of r values. */
-	vals_t besties[MAXD][MAXR+1];	/* best values for each r,d comb. */
+//	vals_t besties[MAXD][MAXR+1];
 	int limits[MAXD];
 	int D;		// number of darts
 	int R;		// number of regions
 	int d;		// current d value
 	int r;		// current value of r 
-	unsigned long iters;	// iteration count
-	hrtime_t begin;		// start of iterations
-	hrtime_t end;		// when we quit.
-	hrtime_t runtime;	// total runtime.
+	int ncpus;		// all cpus for this run
+	int subcpus;		// all cpus for peers
+	int mycpus;		// cpus assigned to me.
+	int kids;		// how many sub-processes (n slots)
+	slot_t *slots;		// if watching kids
+	task_t task;		// what i'm doing
+	best_t besties;	/* best values for each r,d comb. */
+	stats_t	stat;	// counters and timers
 } block_t;
 
 /* global huge block of stuff. EVERYTHING is stored here. */
@@ -278,6 +326,84 @@ dumpmore(int d, int r)
 	printf("}\n");
 }
 
+void
+meld(int n, slot_t *slots)
+{
+}
+
+
+void
+recover(int n, slot_t *slots)
+{
+}
+
+/* watch the kids */
+int
+babysit(int n, slot_t *slots)
+{
+	int i, j;
+	int sub;
+	pid_t p;
+	pid_t wp = -1;
+	int status;
+	int rv;
+
+
+	if ((n < 1) || (slots == NULL)) {
+		return -1;
+	}
+
+	while (1) {
+		p = wait(&status);
+		if (p < 0) {
+			if (errno == EINTR)  {
+				continue;		// retry.
+			} else if (errno == ECHILD) {
+				recover(-1, slots);	// recover-all
+				continue;
+			} else {
+				perror("wait");
+				return -2;
+			}
+		} else if (p == 0) {
+			/* doesn't make sense. */
+			printf("weird pid from wait\n");
+			return -3;
+		}
+		/* got a pid. */
+		for (sub = -1, i = 0; i < n; i++) {
+			if (slots[i].cpid == p) {
+				sub = i;
+				break;
+			}
+		}
+		if (sub < 0) {
+			printf("unknown child process %d: ignored\n", p);
+			continue;
+		}
+		if (WIFEXITED(status)) {
+			rv =  WEXITSTATUS(status);
+		} else if (WIFSIGNALED(status)) {
+			recover(sub, slots);
+			continue;
+		}
+		if (rv < 0) {
+			/* it's a lost cause */
+			// ???
+			break;
+		} else if (rv > 0) {
+			/* possible to try again */
+			recover(sub, slots);
+			continue;
+		} else { 	/* just right */
+			// add in the info
+			meld(sub, slots);	// more params?
+		}
+
+	}
+}
+
+
 int
 checkpoint(char *fn)
 {
@@ -299,8 +425,8 @@ checkpoint(char *fn)
 		hrtime_t now;
 
 		now = gethrtime();
-		hbos.runtime += (now - hbos.begin);
-		hbos.begin = hbos.end = 0;
+		hbos.stat.runtime += (now - hbos.stat.begin);
+		hbos.stat.begin = hbos.stat.end = 0;
 	}
 
 	wrv = write(fd, &hbos, sizeof(block_t));
@@ -358,7 +484,7 @@ int restart(char *fn)
 
 	/* restart thingy. */
 	if (dbg & DBG_TIME) {
-		hbos.begin = gethrtime();
+		hbos.stat.begin = gethrtime();
 	}
 	printf("restarting from checkpoint %s\n", cpfn);
 	return 0;
@@ -447,9 +573,9 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 		DBG(DBG_FILLIN, ("for d=%d,r=%d,maxval=%d gap=%d \n", d+1,r+1, scores->maxval, scores->gap));
 	}
 	/* update best scores. */
-	if (scores->gap > hbos.besties[d][r].score) {
-		hbos.besties[d][r] = hbos.vals;
-		hbos.besties[d][r].score = scores->gap;
+	if (scores->gap > hbos.besties.b[d][r].score) {
+		hbos.besties.b[d][r] = hbos.vals;
+		hbos.besties.b[d][r].score = scores->gap;
 		DBG(DBG_PRO, ("new best for d=%d,r=%d is %d\n", d+1, r+1, scores->gap));
 		DBG(DBG_DUMPV, ("\tvals ")) {
 			dumpvals(r);
@@ -497,24 +623,24 @@ mrf(int depth)
 	for (/*already set*/; hbos.pl[hbos.r].rval <= hbos.pl[hbos.r].rhi;
 	    hbos.pl[hbos.r].rval++) {
 		/* here is where we CPR */
-		if ((cpval > 0) && (hbos.iters > 0) && ( (hbos.iters % cpval)==0) && (! restarting)) {
-			printf("checkpoint at %d iterations (depth=%d)\n", hbos.iters, depth);
+		if ((cpval > 0) && (hbos.stat.iters > 0) && ( (hbos.stat.iters % cpval)==0) && (! restarting)) {
+			printf("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth);
 			checkpoint(cpfn);
 		}
 #ifdef REDUNDANT
-		if ((stop > 0) && (hbos.iters >= stop)) {
-			printf("checkpoint and stop at %d iterations(depth=%d)\n", hbos.iters, depth);
+		if ((stop > 0) && (hbos.stat.iters >= stop)) {
+			printf("checkpoint and stop at %d iterations(depth=%d)\n", hbos.stat.iters, depth);
 			checkpoint(cpfN);
 			exit(1);
 		}
 #endif
-		if ((stop > 0) && (!restarting) && (hbos.iters >= stop)) {
-			printf("checkpoint and stop at %d iterations(depth=%d)\n", hbos.iters, depth);
+		if ((stop > 0) && (!restarting) && (hbos.stat.iters >= stop)) {
+			printf("checkpoint and stop at %lu iterations(depth=%d)\n", hbos.stat.iters, depth);
 			checkpoint(cpfn);
 			exit(0);
 		}
 		if (restarting) {
-			if (hbos.iters > stop) {
+			if (hbos.stat.iters > stop) {
 				stop = 0;
 			}
 			if (depth < hbos.r) {
@@ -537,9 +663,9 @@ mrf(int depth)
 			mrf(depth+1);
 		}
 		hbos.r--;
-		hbos.iters++;
+		hbos.stat.iters++;
 		if (dbg & DBG_HASH) {
-			if ((hbos.iters % hashval) == 0) {
+			if ((hbos.stat.iters % hashval) == 0) {
 				printf("#");
 			}
 		}
@@ -548,7 +674,9 @@ mrf(int depth)
 	DBG(DBG_DUMPV, ("current vals ")) {
 		dumpvals(hbos.r);
 	}
-	DBG(DBG_CTR, ("performed %d iterations\n", hbos.iters));
+	if (dbg & DBG_CTR) {
+		printf("performed %lu iterations\n", hbos.stat.iters);
+	}
 	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
 }
 
@@ -561,9 +689,9 @@ dumpscores(int D)
 	printf("best scores found this run:\n");
 	for (d=0; d < D; d++) {
 		for (r = 0; r < hbos.limits[d]; r++) {
-			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, hbos.besties[d][r].score);
+			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, hbos.besties.b[d][r].score);
 			for (i=0; i <= r; i++) {
-				printf("%d,", hbos.besties[d][r].vals[i]);
+				printf("%d,", hbos.besties.b[d][r].vals[i]);
 			}
 			printf("\n");
 		}
@@ -598,8 +726,8 @@ initstuff(int D, int R)
 	hbos.pl[0].sc[0].maxval = 1;
 	hbos.pl[0].rval = 1;
 
-	hbos.besties[0][0].score = 2;
-	hbos.besties[0][0].vals[0] = 1;
+	hbos.besties.b[0][0].score = 2;
+	hbos.besties.b[0][0].vals[0] = 1;
 
 	DBG(DBG_DUMPF, ("init frame\n")) {
 		dumpscore(hbos.pl[0].sc[0]);
@@ -621,8 +749,10 @@ initstuff(int D, int R)
 void
 usage(char *me)
 {
-	fprintf(stderr, "usage: %s [-vqtcVhbR] [-H interval] [-C cnt]"
+	fprintf(stderr, "usage: %s [-vqtcVhb] [-H interval] [-C cnt] [-n cpus]"
 		" [-l limit] [-F file ] [-D val] Darts Regions\n", me);
+	fprintf(stderr, "usage: %s -R [-vqtcVhb] [-H interval] [-C cnt]"
+		" [-l limit] [-F file ] [-D val]\n", me);
 	fprintf(stderr, "\t-v: verbose. use multiple time for more.\n"
 		"\t-q: quiet. turns off verbose.\n"
 		"\t-t: display execution time.\n"
@@ -632,7 +762,6 @@ usage(char *me)
 		"\t-H interval: set the hash interval (default 1,000,000)\n"
 		"\t-b: show best answers as found (progress report)\n"
 		"\t-D value: set dbg value directly.\n"
-//		"\t-O file: direct output to file instead of stdout\n"
 		"\t-n cpus: fork n copies to work in parallel.\n"
 		"\t-l limit: stop after limit iterations (checkpoint)\n"
 		"\t-R restart execution from checkpoint file.\n"
@@ -678,11 +807,6 @@ main(int argc, char **argv)
 			dbg = strtol(optarg, NULL, 0);
 			dbg |= DBG_DBG;
 			break;
-#ifdef NOTDEF
-		case 'O':
-			outfile = optarg;
-			break;
-#endif
 		case 'l':
 			dbg |= DBG_CPR;
 			stop = strtol(optarg, NULL, 0);
@@ -696,6 +820,9 @@ main(int argc, char **argv)
 		case 'C':
 			dbg |= DBG_CPR;
 			cpval = strtol(optarg, NULL, 0);
+			if (cpval == 0) {
+				checker = 1;
+			}
 			break;
 		case '?':
 		default:
@@ -757,13 +884,13 @@ main(int argc, char **argv)
 	}
 
 	if (dbg & DBG_TIME) {
-		hbos.begin = gethrtime();
+		hbos.stat.begin = gethrtime();
 	}
 	mrf(0);
 	if (dbg & DBG_TIME) {
-		hbos.end = gethrtime();
-		hbos.runtime += hbos.end - hbos.begin;
-		hbos.end = hbos.begin = 0;
+		hbos.stat.end = gethrtime();
+		hbos.stat.runtime += hbos.stat.end - hbos.stat.begin;
+		hbos.stat.end = hbos.stat.begin = 0;
 	}
 
 	if (dbg & DBG_HASH) {
@@ -775,11 +902,13 @@ main(int argc, char **argv)
 		if (dbg & DBG_CTR) {
 			printf("performed %lu iterations in %lu.%lu seconds,"
 			    " %lu iters/sec\n",
-			    hbos.iters, hbos.runtime/1000000000,
-			    hbos.runtime, (hbos.runtime/1000000)%1000,
-			    hbos.iters/(hbos.runtime/1000000000) );
+			    (unsigned long)hbos.stat.iters,
+			    (unsigned long)(hbos.stat.runtime/1000000000),
+			    (unsigned long)hbos.stat.runtime,
+			    (unsigned long)((hbos.stat.runtime/1000000)%1000),
+			    (unsigned long)(hbos.stat.iters/(hbos.stat.runtime/1000000000) ));
 		} else {
-			printf("elapsed time %llu.%llu seconds.\n", hbos.runtime/1000000000ULL,  (hbos.runtime/1000000)%1000);
+			printf("elapsed time %llu.%llu seconds.\n", hbos.stat.runtime/1000000000ULL,  (hbos.stat.runtime/1000000)%1000);
 		}
 	}
 
