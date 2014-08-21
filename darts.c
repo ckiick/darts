@@ -92,6 +92,7 @@ hrtime_t gethrtime()
 
 #define	CPFN	"darts.cpr"
 #define	FNSZ	32
+#define	FNFMT	"darts_r%02d_%04d"
 #define MAXR	40
 #define	MAXVAL	(12*1024)
 #define	MAXD	6
@@ -162,9 +163,21 @@ typedef struct _result {
 	stats_t stats;
 } result_t;
 
+/* values for status */
+#define SS_NEW	0	/* blank and empty */
+#define SS_INIT	1	/* initialized */
+#define SS_SET	2	/* ready to run. */
+#define SS_RUN	3	/* spawned. */
+#define	SS_EXIT	4	/* called exit */
+#define	SS_DEAD	5	/* hit a signal */
+#define SS_DONE	6	/* all done. */
+#define SS_REV	7	/* reviving */
+#define SS_ERR	-1	/* QED */
+
 typedef struct _slot {
 	task_t task;
 	int status;
+	int rv;
 	pid_t cpid;
 	result_t res;
 } slot_t;
@@ -183,7 +196,7 @@ typedef struct _block {
 	int mycpus;		// cpus assigned to me.
 	int kids;		// how many sub-processes (n slots)
 	slot_t *slots;		// if watching kids
-	task_t task;		// what i'm doing
+
 	best_t besties;	/* best values for each r,d comb. */
 	stats_t	stat;	// counters and timers
 } block_t;
@@ -326,20 +339,23 @@ dumpmore(int d, int r)
 	printf("}\n");
 }
 
+/* find results and merge them in with the rest. */
 void
 meld(int n, slot_t *slots)
 {
 }
 
 
+/* a child has died. attempt to bring it back to life. */
 void
-recover(int n, slot_t *slots)
+revive(int id)
 {
+
 }
 
 /* watch the kids */
 int
-babysit(int n, slot_t *slots)
+babysit()
 {
 	int i, j;
 	int sub;
@@ -347,19 +363,22 @@ babysit(int n, slot_t *slots)
 	pid_t wp = -1;
 	int status;
 	int rv;
+	int notdone;
 
 
 	if ((n < 1) || (slots == NULL)) {
 		return -1;
 	}
-
-	while (1) {
+	notdone = hbos.kids;
+	while (notdone) {
 		p = wait(&status);
 		if (p < 0) {
 			if (errno == EINTR)  {
 				continue;		// retry.
 			} else if (errno == ECHILD) {
-				recover(-1, slots);	// recover-all
+				if (revive(-1, slots) == 0) {
+					/* nothing to revive. */
+				}
 				continue;
 			} else {
 				perror("wait");
@@ -382,9 +401,10 @@ babysit(int n, slot_t *slots)
 			continue;
 		}
 		if (WIFEXITED(status)) {
-			rv =  WEXITSTATUS(status);
+			slots[sub].rv =  WEXITSTATUS(status);
 		} else if (WIFSIGNALED(status)) {
-			recover(sub, slots);
+			slots[sub].status = 1;
+			revive(sub, slots);
 			continue;
 		}
 		if (rv < 0) {
@@ -393,7 +413,7 @@ babysit(int n, slot_t *slots)
 			break;
 		} else if (rv > 0) {
 			/* possible to try again */
-			recover(sub, slots);
+			revive(sub, slots);
 			continue;
 		} else { 	/* just right */
 			// add in the info
@@ -401,8 +421,116 @@ babysit(int n, slot_t *slots)
 		}
 
 	}
+	return 0;
 }
 
+/* create kids. */
+int
+spawn(int n, slot_t *slots)
+{
+	int i = 0;
+	pid_t fp;
+	int err, rv;
+
+	if (n < 0) {
+		/* special case when we want to spawn just one. */
+		i = -n;
+		n = (-n) + 1;
+	}
+	for (; i < n; i++) {
+		if (slots[i].status != SS_SET) {
+			continue;	/* nope */
+		}
+
+		fp = fork();
+		if (fp == 0) {
+			/* we are the child */
+			hbos.task = slots[i].task;
+			free(slots);	/* dont need parent's data */
+			hbos.slots = NULL;
+			return(0);
+		} else if (fp > 0) {
+			/* parentage */
+			slots[i].status = SS_RUN;
+			slots[i].cpid = fp;
+			/* keep going */
+		} else {
+			perror("fork");
+			slots[i].status = SS_ERR;
+			/* miscarry */
+			return(-1);
+		}
+	}
+	/* proud parents have spawned */
+	return 1;
+}
+
+/* divide up task.
+ * returns: <0=error, >0=#slots created, =0 nothing to do.
+*/
+int
+divvy()
+{
+	int i, j, k, slice;
+	int n, range;
+
+	if (hbos.task.cpus <= 1) {
+		/* no extra cpus. We do it all ourselves. */
+		return 0;
+	}
+
+	range = (hbos.task.to - hbos.task.from) + 1;
+
+	if (range > hbos.task.cpus) {
+		n = hbos.task.cpus;
+	} else {
+		/* more cpus than r-values (or same) */
+		n = range;
+	}
+	/* allocate slots */
+	hbos.slots = malloc(sizeof(slot_t) * n);
+	if (hbos.slots == NULL) {
+		perror("malloc");
+		return -1;
+	}
+	memset(hbos.slots, 0, sizeof(slot_t)*n);
+	hbos.kids = n;
+	j = hbos.task.cpus;
+	k = range;
+	for (i = 0; i < n; i++) {
+		hbos.slots[i].task.id = i;
+		hbos.slots[i].task.lvl = hbos.r + 1; 
+		hbos.slots[i].task.rhi = hbos.pl[hbos.r+1].rhi;
+		hbos.slots[i].task.rlo = hbos.pl[hbos.r+1].rlow;
+		if (n == range) {
+			hbos.slots[i].task.to = hbos.slots[i].task.from =
+			     (hbos.slots[i].task.rlo + i);
+			slice = j / k;
+			assert(slice > 0);
+			hbos.slots[i].task.cpus = slice;
+			j -= slice;
+			k--;
+		} else {
+			hbos.slots[i].task.cpus = 1;
+			if (i = 0) {
+				hbos.slots[i].task.from = hbos.slots[i].task.rlo;
+			} else {
+				hbos.slots[i].task.from = hbos.slots[i].task.to+1;
+			}
+			slice = k / j;
+			assert(slice > 0);
+
+			hbos.slots[i].task.to = hbos.slots[i].task.from + (slice - 1);
+			k -= slice;
+			j--;
+		}
+		hbos.slots[i].status = SS_INIT;
+		sprintf(hbos.slots[i].task.fname,  FNFMT, hbos.slots[i].task.lvl, hbos.slots[i].task.id);
+	}
+	assert((j== 0) && (k == 0));
+
+	return n;
+}
 
 int
 checkpoint(char *fn)
@@ -489,6 +617,24 @@ int restart(char *fn)
 	}
 	printf("restarting from checkpoint %s\n", cpfn);
 	return 0;
+}
+
+/* at the end, print out everything we found. */
+void
+dumpscores(int D)
+{
+	int d, r, i;
+
+	printf("best scores found this run:\n");
+	for (d=0; d < D; d++) {
+		for (r = 0; r < hbos.limits[d]; r++) {
+			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, hbos.besties.b[d][r].score);
+			for (i=0; i <= r; i++) {
+				printf("%d,", hbos.besties.b[d][r].vals[i]);
+			}
+			printf("\n");
+		}
+	}
 }
 
 /* at depth r, use val to fill in the frame for r, for all 1...D darts
@@ -593,7 +739,6 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	}
 }
 
-
 /* massively recursive function. Well, maybe not so massive. */
 void
 mrf(int depth)
@@ -683,24 +828,6 @@ mrf(int depth)
 	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
 }
 
-/* at the end, print out everything we found. */
-void
-dumpscores(int D)
-{
-	int d, r, i;
-
-	printf("best scores found this run:\n");
-	for (d=0; d < D; d++) {
-		for (r = 0; r < hbos.limits[d]; r++) {
-			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, hbos.besties.b[d][r].score);
-			for (i=0; i <= r; i++) {
-				printf("%d,", hbos.besties.b[d][r].vals[i]);
-			}
-			printf("\n");
-		}
-	}
-}
-
 void
 initstuff(int D, int R)
 {
@@ -708,12 +835,6 @@ initstuff(int D, int R)
 
 	DBG(DBG_INIT, ("zeroing out hbos %d bytes\n", sizeof(block_t)));
 	bzero(&hbos, sizeof(block_t));
-/*
-	DBG(DBG_INIT, ("zeroing out vals %d bytes\n", sizeof(vals_t)));
-	bzero(vals, sizeof(vals_t));
-	DBG(DBG_INIT, ("zeroing out besties %d bytes\n", sizeof(besties)));
-	bzero(besties, sizeof(besties));
-*/
 
 	hbos.D = D;	/* big-D and big-R are not 0-based. */
 	hbos.R = R;
