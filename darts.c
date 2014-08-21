@@ -426,7 +426,8 @@ checkpoint(char *fn)
 
 		now = gethrtime();
 		hbos.stat.runtime += (now - hbos.stat.begin);
-		hbos.stat.begin = hbos.stat.end = 0;
+		hbos.stat.begin = gethrtime();
+		hbos.stat.end = 0;
 	}
 
 	wrv = write(fd, &hbos, sizeof(block_t));
@@ -669,7 +670,9 @@ mrf(int depth)
 				printf("#");
 			}
 		}
-
+		if (depth == checker) {
+			checkpoint(cpfn);
+		}
 	}
 	DBG(DBG_DUMPV, ("current vals ")) {
 		dumpvals(hbos.r);
@@ -820,9 +823,6 @@ main(int argc, char **argv)
 		case 'C':
 			dbg |= DBG_CPR;
 			cpval = strtol(optarg, NULL, 0);
-			if (cpval == 0) {
-				checker = 1;
-			}
 			break;
 		case '?':
 		default:
@@ -853,6 +853,10 @@ main(int argc, char **argv)
 		}
 	}
 
+	if (cpval < hbos.R) {
+		checker = cpval;
+		cpval = 0;
+	}
 	if (cpfn == NULL) {
 		cpfn = def_cpfn;
 	}
@@ -862,7 +866,7 @@ main(int argc, char **argv)
 		case 5: dbg = DBG_ALL;
 		case 4: dbg |= DBG_DUMPS|DBG_DUMPF|DBG_DUMPV|DBG_FILLIN2;
 		case 3: dbg |= DBG_MAIN|DBG_INIT;
-		case 2: dbg |= DBG_MRF | DBG_FILLIN;
+		case 2: dbg |= DBG_MRF|DBG_FILLIN;
 		case 1:	dbg |= DBG_PRO;
 			break;
 		case -1: dbg = DBG_NONE;
@@ -889,7 +893,7 @@ main(int argc, char **argv)
 	mrf(0);
 	if (dbg & DBG_TIME) {
 		hbos.stat.end = gethrtime();
-		hbos.stat.runtime += hbos.stat.end - hbos.stat.begin;
+		hbos.stat.runtime += (hbos.stat.end - hbos.stat.begin);
 		hbos.stat.end = hbos.stat.begin = 0;
 	}
 
@@ -900,15 +904,17 @@ main(int argc, char **argv)
 
 	if (dbg & DBG_TIME) {
 		if (dbg & DBG_CTR) {
-			printf("performed %lu iterations in %lu.%lu seconds,"
-			    " %lu iters/sec\n",
-			    (unsigned long)hbos.stat.iters,
-			    (unsigned long)(hbos.stat.runtime/1000000000),
-			    (unsigned long)hbos.stat.runtime,
-			    (unsigned long)((hbos.stat.runtime/1000000)%1000),
-			    (unsigned long)(hbos.stat.iters/(hbos.stat.runtime/1000000000) ));
+			printf("performed %lu iters in %llu.%04llu seconds",
+			    hbos.stat.iters,
+			    (hbos.stat.runtime/1000000000ULL),
+			    ((hbos.stat.runtime/1000000ULL)%1000ULL));
+			if (hbos.stat.runtime >= 1000000000ULL) {
+				printf(" %llu iters/sec",
+				    hbos.stat.iters/(hbos.stat.runtime/1000000000ULL));
+			}
+			printf("\n");
 		} else {
-			printf("elapsed time %llu.%llu seconds.\n", hbos.stat.runtime/1000000000ULL,  (hbos.stat.runtime/1000000)%1000);
+			printf("elapsed time %llu.%04llu seconds.\n", hbos.stat.runtime/1000000000ULL,  (hbos.stat.runtime/1000000)%1000);
 		}
 	}
 
