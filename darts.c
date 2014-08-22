@@ -103,6 +103,7 @@ char		*cpfn = NULL;		// checkpoint filename
 char		def_cpfn[] = CPFN;	// default cpfn
 int		restarting = 0;		// -R - recover from checkpoint
 long		dbg = DBG_NONE;		// debug/verbose and other flags
+int		wipe = 0;		// wipe - clean up and quit
 
 typedef struct _sc {
 	bar_t s;		/* bit array. */
@@ -191,6 +192,7 @@ typedef struct _block {
 	int ncpus;		// all cpus for this run
 	int subcpus;		// all cpus for peers
 	int mycpus;		// cpus assigned to me.
+	int startdepth;		// know when to retire
 	int kids;		// how many sub-processes (n slots)
 	slot_t *slots;		// if watching kids
 	task_t task;		// assigned work to do
@@ -475,7 +477,7 @@ revive(int id)
 			souls++;
 		} else {
 			/* we are the child again. */
-			// CALL mrf(); Or return to it. Something.
+			// CALL work(); Or return to it. Something.
 		}
 	}
 	return souls;
@@ -555,7 +557,12 @@ babysit()
 	return 0;
 }
 
-/* create kids. */
+/*
+ * create kids. All done by what's in the slots.
+ * Normally use -1 id to spawn all. Can give >0 id to spawn 1.
+ * returns -1 = error, 0 if we are the forked child, and >1 if parent,
+ * indicating number of kids.
+ */
 int
 spawn(int id)
 {
@@ -876,9 +883,11 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	}
 }
 
-/* massively recursive function. Well, maybe not so massive. */
-void
-mrf(int depth)
+/*It's not just a job... 
+ * We need to know start depth to know when to quit.
+ */
+int
+work(int depth)
 {
 	sc_t *scores;
 
@@ -887,9 +896,9 @@ mrf(int depth)
 	} else {
 
 		DBG(DBG_MRF, ("-> called with d=%d r=%d\n", hbos.d+1, hbos.r+1));
-		if ((hbos.d < 0) || (hbos.r < 0)) return;
-		if ((hbos.d == 0) && (hbos.r == 0)) return;
-		if (hbos.r >= hbos.limits[hbos.d]) return;	/* important stop condition. */
+		if ((hbos.d < 0) || (hbos.r < 0)) return -1;
+		if ((hbos.d == 0) && (hbos.r == 0)) return -1;
+		if (hbos.r >= hbos.limits[hbos.d]) return -1;	/* important stop condition. */
 
 		if (hbos.r == 0) {
 			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r].rhi = 1;
@@ -910,13 +919,6 @@ mrf(int depth)
 			printf("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth);
 			checkpoint(cpfn);
 		}
-#ifdef REDUNDANT
-		if ((stop > 0) && (hbos.stat.iters >= stop)) {
-			printf("checkpoint and stop at %d iterations(depth=%d)\n", hbos.stat.iters, depth);
-			checkpoint(cpfN);
-			exit(1);
-		}
-#endif
 		if ((stop > 0) && (!restarting) && (hbos.stat.iters >= stop)) {
 			printf("checkpoint and stop at %lu iterations(depth=%d)\n", hbos.stat.iters, depth);
 			checkpoint(cpfn);
@@ -927,7 +929,7 @@ mrf(int depth)
 				stop = 0;
 			}
 			if (depth < hbos.r) {
-				mrf(depth+1);
+				work(depth+1);
 			} else {
 				restarting = 0;
 				/* back to normal */
@@ -943,7 +945,7 @@ mrf(int depth)
 			}
 			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].rval));
 			hbos.r++;
-			mrf(depth+1);
+			work(depth+1);
 		}
 		hbos.r--;
 		hbos.stat.iters++;
@@ -962,28 +964,33 @@ mrf(int depth)
 	}
 	DBG(DBG_CTR, ("performed %lu iterations\n", hbos.stat.iters));
 	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
+	return 0;
 }
 
 
 #define NX_SOUL		0x0000F
-#define NX_NEW		0x00000		/* new soul */
 #define NX_REV		0x00003		/* we are a reincarnation */
+#define NX_NEW		0x00000		/* new soul */
 
 #define NX_FROM		0x000F0
 #define NX_MAIN		0x00010		/* called from main. */
 #define NX_FORK		0x00020		/* called as child just forked */
 #define NX_WORK		0x00040		/* called from worker */
 
-#define NX_FAM		0x00F00
+#define NX_RELATE	0x00F00
+#define NX_ALONE	0x00000		/* no kids, no parent. */
 #define NX_CHILD	0x00100		/* has a parent. */
-#define NX_PAR		0x00200		/* children. possibly orphan. */
+#define NX_PARENT	0x00200		/* children. possibly orphan. */
+#define NX_FAMILY	0x00300		/* both */
 
-#define NX_ACTION	0x0F000
+#define NX_ACTION	0xFF000
 #define NX_EARN		0x01000		/* go to work */
 #define NX_RETIRE	0x02000		/* time to retire */
 #define NX_BREED	0x04000		/* start a family */
 #define NX_KILLEM	0x08000		/* shut ti all down */
 #define NX_RECOVER	0x10000		/* find any orphans, clean up */
+#define NX_CLEAN	0x20000		/* clean up */
+#define NX_ADOPT	0x40000		/* play godfather */
 
 /* the nexus.
  * the nexus is the crossroads of the program.  It's the first thing
@@ -1006,8 +1013,60 @@ int nexus(int marker, int depth)
 	 * help nexus find the right action.
 	 */
 
+	/* NOTE: work doesn't call back here (yet). */
+/* call flow graph... 
+ * main
+ *   nexus
+ *     earn -> nexus(ALONE) <-- nexus
+ *     breed
+ *        divvy
+ *	  spawn
+ *	    fork -> nexus(CHILD)
+ *	  babysit <-- nexus
+ *     recover -->nexus(?)  <-- nexus
+ *       revive -> nexus(?)
+ *     revive -->nexus(?)
+ *     retire
+ */
 
+/* I/O matrix
+SOUL	FROM	RELATE	ACTION(s)		after
+----	----	---	------			-----
+NEW	MAIN	ALONE	EARN			CLEAN, return
+NEW	MAIN	CHILD	ERR			exit(1)
+NEW	MAIN	PARENT	BREED			CLEAN, return
+NEW	MAIN	FAMILY	ERR			exit(1)
+NEW	FORK	ALONE	ERR			exit(1)
+NEW	FORK	CHILD	EARN			RETIRE
+NEW	FORK	PARENT	ERR			exit(1)
+NEW	FORK	FAMILY	BREED			RETIRE
+NEW	WORK	ALONE	EARN			return
+NEW	WORK	CHILD	EARN			RETIRE
+NEW	WORK	PARENT	BREED			RETIRE
+NEW	WORK	FAMILY	BREED			RETIRE
+REV	MAIN	ALONE	REVIVE, EARN		CLEAN, return
+REV	MAIN	CHILD	EARN			RETIRE
+REV	MAIN	PARENT	RECOVER			return
+REV	MAIN	FAMILY	RECOVER			RETIRE
+REV	FORK	ALONE	EARN			return
+REV	FORK	CHILD	EARN			RETIRE
+REV	FORK	PARENT	RECOVER/BREED		return
+REV	FORK	FAMILY	RECOVER/BREED		RETIRE
+REV	WORK	ALONE	EARN			return
+REV	WORK	CHILD	EARN			RETIRE
+REV	WORK	PARENT	RECOVER			RETIRE
+REV	WORK	FAMILY	RECOVER			RETIRE
+*/
 
+/*
+ * Yeah, that's messy and I've only written 1 line of code.
+ * When is nexus called?
+ *	- from main, either restarting or new
+ *	- from work, when ncpu>1, also restarting or new
+ *	- after a fork, as a sub-process, restart or new
+ *	- possibly, when doing recovery ops, restart only
+ * Problem is, the process tree is wiggly.
+ */
 }
 
 
@@ -1086,6 +1145,9 @@ main(int argc, char **argv)
 
 	while ((c = getopt(argc, argv, "vqtcVhH:bD:l:RF:C:n:")) != -1) {
 		switch(c) {
+		case 'w':
+			wipe = 1;
+			break;
 		case 'n':
 			hbos.ncpus = strtol(optarg, NULL, 0);
 			break;
@@ -1197,7 +1259,7 @@ main(int argc, char **argv)
 	if (dbg & DBG_TIME) {
 		hbos.stat.begin = gethrtime();
 	}
-	mrf(0);
+	work(0);
 	if (dbg & DBG_TIME) {
 		hbos.stat.end = gethrtime();
 		hbos.stat.runtime += (hbos.stat.end - hbos.stat.begin);
