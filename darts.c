@@ -105,12 +105,15 @@ int		restarting = 0;		// -R - recover from checkpoint
 long		dbg = DBG_NONE;		// debug/verbose and other flags
 int		wipe = 0;		// wipe - clean up and quit
 
+
+/* this is the data for a particular (d,r,{V[r]}). */
 typedef struct _sc {
 	bar_t s;		/* bit array. */
 	int gap;		/* also score. first uncovered number */
 	int maxval;		/* max val covered. */
 } sc_t;
 
+/* each "plane" is a number of darts. */
 typedef struct _plane {
 	sc_t sc[MAXD];		/* one set for each number of darts */
 	int rval;		/* value of region for this plane. */
@@ -119,27 +122,31 @@ typedef struct _plane {
 } plane_t;
 
 /* expanded  */
+/* vals is an "answer" for a given d,r. The from,to is when we
+ * have only partly scanned the range rlo-rhi.  Some of this is
+ * redundant, but since vals can be separated from hbos, it has to be.
+ */
 typedef struct _vals {
-	int score;		/* where is the first gap? */
+	int score;		/* where is the first gap? (sc.gap)*/
 	int vals[MAXR+1];	/* value of each region. */
-	int from;		/* starting value */
-	int to;			/* ending value */
-	int rhi;		/* highest r value */
-	int rlo;		/* lowest r value */
+	int from;		/* starting value (from task/pl) */
+	int to;			/* ending value  (from task/pl)*/
+	int rhi;		/* highest r value (plane.rhi)*/
+	int rlo;		/* lowest r value (plane.rlow */
 } vals_t;
-
 
 typedef struct _task {
 	int id;		// who is this for
 	int lvl;	// starting at R lvl
-	int rhi;	// upper
-	int rlo;	// lower
-	int from;	// start here
-	int to;		// end here
-	int cpus;	// how many cpus to use
+	int rhi;	// upper (pl.rhi)
+	int rlo;	// lower (pl.rlow)
+	int from;	// start here (divvy)
+	int to;		// end here (divvy)
+	int cpus;	// how many cpus to use (divvy)
 	char fname[FNSZ];	// non-suffix name for us
 } task_t;
 
+/* a 1 elemnt struct lets us use assignment instead of memcpy */
 typedef struct _best {
 	vals_t b[MAXD][MAXR+1];	/* best values for each r,d comb. */
 } best_t;
@@ -152,6 +159,7 @@ typedef struct _stats {
 	unsigned long checks;	// how many checkpoints
 } stats_t;
 
+/* saved by child at retirement,to be picked up by parent */
 typedef struct _result {
 	task_t task;
 	best_t besties;
@@ -172,19 +180,19 @@ typedef struct _result {
 #define SS_MELD	10	/* results have been merged. */
 #define SS_ERR	-1	/* ob */
 
+/* made by divvy. one for each process. used by spawn. */
 typedef struct _slot {
-	task_t task;
-	int status;
-	int rv;
-	pid_t cpid;
-	result_t res;
+	task_t task;	/* given to child. */
+	int status;	/* tracking child */
+	int rv;		/* from process */
+	pid_t cpid;	/* from fork */
+	result_t res;	/* child fills this out. copied to hbos.task. */
 } slot_t;
 
 typedef struct _block {
 	plane_t pl[MAXR+1];	/* one for each number of regions. */
 	vals_t vals;			/* current set of r values. */
-//	vals_t besties[MAXD][MAXR+1];
-	int limits[MAXD];
+	int limits[MAXD];		/* dont go on forever */
 	int D;		// number of darts
 	int R;		// number of regions
 	int d;		// current d value
@@ -609,7 +617,7 @@ spawn(int id)
 	return rv;
 }
 
-/* divide up task.
+/* divide up task. Allocates and initializes slots for us.
  * returns: <0=error, >0=#slots created, =0 nothing to do.
 */
 int
@@ -618,8 +626,14 @@ divvy()
 	int i, j, k, slice;
 	int n, range;
 
+	/* first, set the limits on the vals */
+	hbos.vals.rlo = hbos.pl[hbos.r].rlow;
+	hbos.vals.rhi = hbos.pl[hbos.r].rhi;
+
 	if (hbos.task.cpus <= 1) {
-		/* no extra cpus. We do it all ourselves. */
+		/* no extra cpus. do the whole thing. */
+		hbos.vals.from = hbos.pl[hbos.r].rlow;
+		hbos.vals.to = hbos.pl[hbos.r].rhi;
 		return 0;
 	}
 	assert(hbos.slots == NULL);
@@ -890,6 +904,7 @@ int
 work(int depth)
 {
 	sc_t *scores;
+	int rv;
 
 	if (restarting && (depth < hbos.r)) {
 		DBG(DBG_MRF, ("-> restarting depth=%d, r=%d\n", depth, hbos.r+1));
@@ -908,11 +923,16 @@ work(int depth)
 		}
 		hbos.pl[hbos.r].rval = hbos.pl[hbos.r].rlow;
 
-		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].rlow, hbos.pl[hbos.r].rhi));
+//		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].rlow, hbos.pl[hbos.r].rhi));
 	}
 
+	/* check it. */
+	rv = divvy();
+	if (rv > 0) {
 
-	for (/*already set*/; hbos.pl[hbos.r].rval <= hbos.pl[hbos.r].rhi;
+	}
+
+	for (/*already set*/; hbos.pl[hbos.r].rval <= hbos.vals.to;
 	    hbos.pl[hbos.r].rval++) {
 		/* here is where we CPR */
 		if ((cpval > 0) && (hbos.stat.iters > 0) && ( (hbos.stat.iters % cpval)==0) && (! restarting)) {
@@ -957,6 +977,116 @@ work(int depth)
 		}
 		if (depth == checker) {
 			checkpoint(cpfn);
+		}
+	}
+	DBG(DBG_DUMPV, ("current vals ")) {
+		dumpvals(hbos.r);
+	}
+	DBG(DBG_CTR, ("performed %lu iterations\n", hbos.stat.iters));
+	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
+	return 0;
+}
+
+/* hi ho hi ho
+ * We need to know start depth to know when to quit.
+ * modified for spawning.  Restart not fully working.
+ */
+
+
+/*
+ * a bit hard here... even without restart.  We have two cases:
+ * task based and plane based.  Cannot over-write task on simple
+ * recursion, so we can't make everything a task.
+int
+work2(int depth)
+{
+	sc_t *scores;
+	int rv;
+
+	if ((hbos.d < 0) || (hbos.r < 0)) return -1;
+	if ((hbos.d == 0) && (hbos.r == 0)) return -1;
+	if (hbos.r >= hbos.limits[hbos.d]) return -1;
+
+	if (restarting && (depth > hbos.r)) {
+		restarting = 0;
+	}
+	if (restarting)
+		DBG(DBG_MRF, ("-> restart depth=%d, r=%d\n", depth, hbos.r+1));
+	} else {
+		DBG(DBG_MRF, ("-> call with d=%d r=%d\n", hbos.d+1, hbos.r+1));
+	}
+	if (! restarting) {
+		/* under restart, should already be set. */
+		if (hbos.r == 0) {
+			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r].rhi = 1;
+		} else  {
+			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r-1].rval + 1;
+			hbos.pl[hbos.r].rhi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
+		}
+		hbos.pl[hbos.r].rval = hbos.pl[hbos.r].rlow;
+	}
+	/* those are the outer limits. copy to vals */
+	hbos.vals.rlo = hbos.pl[hbos.r].rlow;
+	hbos.vals.rhi = hbos.pl[hbos.r].rhi;
+	/* see if we are tasked. */
+	if (hbos.task.lvl == depth) {
+		hbos.vals.from = hbos.task.from;
+		hbos.vals.to = hbos.task.to;
+	} else {
+		hbos.vals.from = hbos.vals.rlow;
+		hbos.vals.to = hbos.vals.rhi;
+	}
+	/* now see if we need to spawn. */
+	rv = divvy();
+	if (rv > 0) {
+		DBG(DBG_MRF, (" at r=%d spawning %d\n", hbos.r+1, rv);
+		rv = spawn(-1); /* spawn!spawn!spawn! */
+		if (rv != 0) {
+			return (babysit());
+		}
+	}
+
+	DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.vals.from; hbos.vals.to);
+	if (depth == checker) {
+		checkpoint(cpfn);
+	}
+	for (hbos.pl[hbos.r].rval = hbos.vals.from;
+	    hbos.pl[hbos.r].rval <= hbos.vals.to;
+	    hbos.pl[hbos.r].rval++) {
+		/* here is where we CPR */
+		if ((! restarting) && (hbos.stat.iters > 0)) {
+			/* no checkpoint under restart */
+			if (cpval && ((hbos.stat.iters % cpval) == 0)) {
+				DBG(DBG_CPR, ("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth));
+				checkpoint(cpfn);
+			}
+			if (stop && (hbos.stat.iters >= stop)) {
+				stop = 0;
+				DBG(DBG_CPR, ("checkpoint and stop at %lu iterations(depth=%d)\n", hbos.stat.iters, depth));
+				checkpoint(cpfn);
+				exit(0);
+			}
+		}
+		if (! restarting) {
+			hbos.vals.vals[hbos.r] = hbos.pl[hbos.r].rval;
+			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].rval);
+			DBG(DBG_DUMPF, ("frame %d\n",hbos.r )) {
+				dumpframe(hbos.r,hbos.d+1);
+			}
+			if (hbos.r+1 >= hbos.limits[hbos.d]) {
+				continue;
+			}
+			hbos.r++;
+		}
+		DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].rval));
+		work(depth+1);
+		hbos.r--;
+		hbos.stat.iters++;
+		if (dbg & DBG_HASH) {
+			if ((hbos.stat.iters % hashval) == 0) {
+				printf("#");
+				fflush(stdout);
+			}
 		}
 	}
 	DBG(DBG_DUMPV, ("current vals ")) {
