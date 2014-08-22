@@ -964,6 +964,54 @@ mrf(int depth)
 	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
 }
 
+
+#define NX_SOUL		0x0000F
+#define NX_NEW		0x00000		/* new soul */
+#define NX_REV		0x00003		/* we are a reincarnation */
+
+#define NX_FROM		0x000F0
+#define NX_MAIN		0x00010		/* called from main. */
+#define NX_FORK		0x00020		/* called as child just forked */
+#define NX_WORK		0x00040		/* called from worker */
+
+#define NX_FAM		0x00F00
+#define NX_CHILD	0x00100		/* has a parent. */
+#define NX_PAR		0x00200		/* children. possibly orphan. */
+
+#define NX_ACTION	0x0F000
+#define NX_EARN		0x01000		/* go to work */
+#define NX_RETIRE	0x02000		/* time to retire */
+#define NX_BREED	0x04000		/* start a family */
+#define NX_KILLEM	0x08000		/* shut ti all down */
+#define NX_RECOVER	0x10000		/* find any orphans, clean up */
+
+/* the nexus.
+ * the nexus is the crossroads of the program.  It's the first thing
+ * called from main or after fork. It knows what it is, and what to
+ * do next.
+ * The nexus has to handle a lot of different cases, some of which 
+ * can overlap.  It knows if it has been reincarnated, and what it did
+ * on what it learned.
+ * The nexus is implemented like a traffic cop.  The state is
+ * examined, and then dispatched to the appropriate action.  It
+ * has to handle this when called, and it has to handle things when
+ * an action returns.
+ * Hang on , it might get a litle messy.
+ */
+int nexus(int marker, int depth)
+{
+	/* depth tells us how far down the stack we are. Could be
+	 * extracted from the hbos, but safer this way.
+	 * the marker is like a token or cookie. Callers use it to
+	 * help nexus find the right action.
+	 */
+
+
+
+}
+
+
+
 void
 initstuff(int D, int R)
 {
