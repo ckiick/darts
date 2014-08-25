@@ -61,6 +61,10 @@
 #define	DBG_PRO		0x00002000
 #define	DBG_HASH	0x00004000
 #define DBG_CPR		0x00008000
+#define DBG_SPAWN	0x00010000
+#define DBG_TASK	0x00020000
+#define DBG_CHILD	0x00040000
+#define DBG_CUTOFF	0x00080000
 #define	DBG_NONE	0x80000000
 #define DBG_ALL		0x7FFFFFFF
 
@@ -91,6 +95,7 @@ hrtime_t gethrtime()
 #define	FNFMT	"darts_r%02d_%04d"
 #define MAXR	40
 #define	MAXD	6
+#define MATURE	2	/* reproductive age */
 
 const int def_limits[MAXD] = { 40, 40, 40, 30, 20, 10 };
 
@@ -101,10 +106,10 @@ uint64_t	cpval = 0;		// checkpoint interval
 int		checker;		// checkpoint on r level
 char		*cpfn = NULL;		// checkpoint filename
 char		def_cpfn[] = CPFN;	// default cpfn
-int		restarting = 0;		// -R - recover from checkpoint
+int		restarting = 0;		// -R - restart from checkpoint
 long		dbg = DBG_NONE;		// debug/verbose and other flags
 int		wipe = 0;		// wipe - clean up and quit
-
+int		ncpus = 0;		// -n how many processes
 
 /* this is the data for a particular (d,r,{V[r]}). */
 typedef struct _sc {
@@ -113,26 +118,30 @@ typedef struct _sc {
 	int maxval;		/* max val covered. */
 } sc_t;
 
+/* individual value */
+typedef struct _val {
+	int v;
+	int hi;
+	int lo;
+	int from;
+	int to;
+} val_t;
+
 /* each "plane" is a number of darts. */
 typedef struct _plane {
 	sc_t sc[MAXD];		/* one set for each number of darts */
-	int rval;		/* value of region for this plane. */
-	int rlow;		/* iteration start value */
-	int rhi;		/* iteration limit */
+	val_t val;		/* value and ranges */
 } plane_t;
 
 /* expanded  */
-/* vals is an "answer" for a given d,r. The from,to is when we
- * have only partly scanned the range rlo-rhi.  Some of this is
- * redundant, but since vals can be separated from hbos, it has to be.
+/* vals is an "answer" for a given d,r.  There's a single global one
+ * in hbos, and a set of them for Besties.  For each val, have to
+ * say what the range is.
  */
+
 typedef struct _vals {
 	int score;		/* where is the first gap? (sc.gap)*/
-	int vals[MAXR+1];	/* value of each region. */
-	int from;		/* starting value (from task/pl) */
-	int to;			/* ending value  (from task/pl)*/
-	int rhi;		/* highest r value (plane.rhi)*/
-	int rlo;		/* lowest r value (plane.rlow */
+	val_t vals[MAXR+1];	/* value of each region. */
 } vals_t;
 
 typedef struct _task {
@@ -140,11 +149,14 @@ typedef struct _task {
 	int lvl;	// starting at R lvl
 	int rhi;	// upper (pl.rhi)
 	int rlo;	// lower (pl.rlow)
-	int from;	// start here (divvy)
-	int to;		// end here (divvy)
-	int cpus;	// how many cpus to use (divvy)
+	int from;	// start here (Divvy)
+	int to;		// end here (Divvy)
+	int cpus;	// how many cpus to use (Divvy)
 	char fname[FNSZ];	// non-suffix name for us
 } task_t;
+
+/* base task. */
+const task_t task0 = { 0, 0, 1, 1, 1, 1, 0, CPFN };
 
 /* a 1 elemnt struct lets us use assignment instead of memcpy */
 typedef struct _best {
@@ -159,18 +171,18 @@ typedef struct _stats {
 	unsigned long checks;	// how many checkpoints
 } stats_t;
 
-/* saved by child at retirement,to be picked up by parent */
+/* saved by child at Retirement,to be picked up by parent */
 typedef struct _result {
 	task_t task;
 	best_t besties;
-	stats_t stats;
+	stats_t stat;
 } result_t;
 
 /* values for status */
 #define SS_NEW	0	/* blank and empty */
 #define SS_INIT	1	/* initialized */
 #define SS_SET	2	/* ready to run. */
-#define SS_RUN	3	/* spawned, off chewing data */
+#define SS_RUN	3	/* Spawned, off chewing data */
 #define SS_REV	4	/* reviving-don't disturb */
 #define	SS_EXIT	5	/* called exit with non-zero */
 #define	SS_DEAD	6	/* hit a signal, and keeled over */
@@ -180,7 +192,7 @@ typedef struct _result {
 #define SS_MELD	10	/* results have been merged. */
 #define SS_ERR	-1	/* ob */
 
-/* made by divvy. one for each process. used by spawn. */
+/* made by Divvy. one for each process. used by Spawn. */
 typedef struct _slot {
 	task_t task;	/* given to child. */
 	int status;	/* tracking child */
@@ -200,7 +212,7 @@ typedef struct _block {
 	int ncpus;		// all cpus for this run
 	int subcpus;		// all cpus for peers
 	int mycpus;		// cpus assigned to me.
-	int startdepth;		// know when to retire
+	int startdepth;		// know when to Retire
 	int kids;		// how many sub-processes (n slots)
 	slot_t *slots;		// if watching kids
 	task_t task;		// assigned work to do
@@ -322,9 +334,27 @@ dumpvals(int R)
 	int i;
 	printf("score=%d:[r=%d] ", hbos.vals.score, R+1);
 	for (i = 1; i < R; i++) {
-		printf("%d, ", hbos.vals.vals[i]);
+		printf("%d, ", hbos.vals.vals[i].v);
 	}
-	printf("%d\n", hbos.vals.vals[i]);
+	printf("%d\n", hbos.vals.vals[i].v);
+}
+
+/* at the end, print out everything we found. */
+void
+dumpscores(best_t besties, int D, int R)
+{
+	int d, r, i;
+
+	printf("best scores found this run:\n");
+	for (d=0; d < D; d++) {
+		for (r = 0; r < R; r++) {
+			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, besties.b[d][r].score);
+			for (i=0; i <= r; i++) {
+				printf("%d,", besties.b[d][r].vals[i].v);
+			}
+			printf("\n");
+		}
+	}
 }
 
 void
@@ -337,7 +367,7 @@ dumpmore(int d, int r)
 
 	printf("O[d=%d,r=%d]:S=%d,V={", d+1, r+1, scores->gap);
 	for (i = 0; i < r+1; i++) {
-		printf("%d ", hbos.vals.vals[i]);
+		printf("%d ", hbos.vals.vals[i].v);
 	}
 	printf("},max=%d,B={", scores->maxval);
 	for (i=1; i <= scores->maxval +1; i++) {
@@ -400,8 +430,8 @@ meld()
 	int lumps = 0;
 	int gaps = 0;
 	int gapping = 1;
-	int lead;
-
+	int lead = 0;
+	int melds = 0;
 
 	for (i = 0; i < hbos.kids; i++) {
 		if (hbos.slots[i].status != SS_GOOD) {
@@ -417,25 +447,27 @@ meld()
 				lead = i;
 				continue;
 			}
-			/* otherwise, try to do a meld */
+			/* otherwise, try to do a Meld */
 			assert(hbos.slots[lead].res.task.to +1 ==
 			    hbos.slots[i].res.task.from);
-			for (j = 0; j <= MAXR ; j++) {
-				for (k = 0; k < MAXD ; k++) {
+			for (j = 0; j <= MAXD ; j++) {
+				for (k = 0; k < MAXR ; k++) {
 					if (hbos.slots[i].res.besties.b[j][k].score > hbos.slots[lead].res.besties.b[j][k].score) {
 						hbos.slots[lead].res.besties.b[j][k] = hbos.slots[i].res.besties.b[j][k];
 					}
 
 				}
 			}
-			hbos.slots[lead].res.stats.iters += hbos.slots[i].res.stats.iters;
-			hbos.slots[lead].res.stats.runtime += hbos.slots[i].res.stats.runtime;
-			hbos.slots[lead].res.stats.checks += hbos.slots[i].res.stats.checks;
+			hbos.slots[lead].res.stat.iters += hbos.slots[i].res.stat.iters;
+			hbos.slots[lead].res.stat.runtime += hbos.slots[i].res.stat.runtime;
+			hbos.slots[lead].res.stat.checks += hbos.slots[i].res.stat.checks;
 			hbos.slots[lead].res.task.to = hbos.slots[i].res.task.to;
 			hbos.slots[i].status = SS_MELD;
+			melds++;
+DBG(DBG_SPAWN, ("melded %d to %d\n", i, lead));
 		}
 	}
-	if ((lumps==1) && (gaps == 0) && (lead == 0)) {
+	if ((lumps==1) && (gaps == 0) && (lead == 0) && (melds > 0)) {
 		return 0;
 	}
 	if (lumps > 0) return lumps;
@@ -446,7 +478,7 @@ meld()
  * Child must be EXIT or DEAD.
  * returns number of revived, 0 if nothing revivable, <0 on erorr.
  * pass in -1 to revive everything possible.
- * For now, just respawn. Later on, want to use CPR.
+ * For now, just reSpawn. Later on, want to use CPR.
  */
 int
 revive(int id)
@@ -501,6 +533,7 @@ babysit()
 	int status;
 	int notdone;
 	int n = hbos.kids;
+	int rv;
 
 
 	if ((hbos.kids < 1) || (hbos.slots == NULL)) {
@@ -520,12 +553,14 @@ babysit()
 				continue;
 			} else {
 				perror("wait");
-				return -2;
+				//return -2;
+				break;
 			}
 		} else if (p == 0) {
 			/* doesn't make sense. */
 			printf("weird pid from wait\n");
-			return -3;
+			continue;
+//			return -3;
 		}
 		/* got a pid. */
 		for (sub = -1, i = 0; i < hbos.kids; i++) {
@@ -535,7 +570,7 @@ babysit()
 			}
 		}
 		if (sub < 0) {
-			printf("unknown child process %d: ignored\n", p);
+			DBG(DBG_SPAWN, ("unknown child process %d: ignored\n", p));
 			continue;
 		}
 		if (WIFEXITED(status)) {
@@ -548,7 +583,7 @@ babysit()
 		if (hbos.slots[sub].rv < 0) {
 			/* it's a lost cause */
 			hbos.slots[sub].status = SS_EXIT;
-			break;
+			continue;
 		} else if (hbos.slots[sub].rv > 0) {
 			/* possible to try again */
 			hbos.slots[sub].status = SS_EXIT;
@@ -557,18 +592,34 @@ babysit()
 		} else { 	/* just right */
 			// add in the info
 			hbos.slots[sub].status = SS_DONE;
-			meld(sub);	// more params?
+DBG(DBG_SPAWN, ("kid %d has done well\n", sub));
 			notdone--;
+			getres(sub);
 		}
-
 	}
-	return 0;
+DBG(DBG_SPAWN, ("no more kids to raise.\n"));
+	/* get what we were after... */
+	rv = meld();
+	if (rv == 0) {
+		/* all results together, in slot 0. */
+		/* what to copy? well, keep the besties. */
+		hbos.besties = hbos.slots[0].res.besties;
+		/* XXX TODO: make stats work. */
+	} else {
+		DBG(DBG_SPAWN, ("meld returned %d\n", rv));
+	}
+	/* cleanup. */
+	free(hbos.slots);
+	hbos.slots = NULL;
+
+	if (rv == 0) return 0;
+	return notdone;
 }
 
 /*
  * create kids. All done by what's in the slots.
- * Normally use -1 id to spawn all. Can give >0 id to spawn 1.
- * returns -1 = error, 0 if we are the forked child, and >1 if parent,
+ * Normally use -1 id to Spawn all. Can give >0 id to Spawn 1.
+ * returns -1 = error, 0 if we are a forked child, and >1 if parent,
  * indicating number of kids.
  */
 int
@@ -587,7 +638,11 @@ spawn(int id)
 		/* special case when we want to spawn just one. */
 		i = id;
 		n = id+1;
+		DBG(DBG_SPAWN, ("spawning one %d\n", id));
+	} else {
+		DBG(DBG_SPAWN, ("spawning all %d\n", n));
 	}
+	fflush(stdout);
 	for (; i < n; i++) {
 		if (hbos.slots[i].status != SS_SET) {
 			continue;	/* nope */
@@ -599,6 +654,13 @@ spawn(int id)
 			hbos.task = hbos.slots[i].task;
 			free(hbos.slots);	/* dont need parent's data */
 			hbos.slots = NULL;
+			if (checker) {
+				checker = hbos.r;
+			}
+			/* children should be seen and not heard */
+			if (dbg & DBG_CUTOFF) {
+				dbg = DBG_NONE;
+			}
 			return(0);
 		} else if (fp > 0) {
 			/* parentage */
@@ -613,34 +675,79 @@ spawn(int id)
 			return(-1);
 		}
 	}
-	/* proud parents have spawned */
+	/* proud parents have Spawned */
+	DBG(DBG_SPAWN, ("Spawned %d kids\n", rv));
 	return rv;
+}
+
+/*
+ * when a sub-process has finished its task, it Retires.
+ * it saves it's results and exits.
+ */
+void
+retire()
+{
+	int fd;
+	char resfn[FNSZ];
+	size_t wrv;
+	result_t res;
+
+	res.task = hbos.task;
+	res.besties = hbos.besties;
+	res.stat = hbos.stat;
+
+	/* construct filename */
+	strcpy(resfn, hbos.task.fname);
+	strcat(resfn, ".res");
+
+	fd = open(resfn, O_WRONLY|O_CREAT|O_TRUNC, 0660);
+	if (fd < 0) {
+		perror("open results file");
+		exit(1);
+	}
+	wrv = write(fd, &res, sizeof(result_t));
+	if (wrv != sizeof(result_t)) {
+		perror("write res");
+		close(fd);
+		exit(2);
+	}
+	close(fd);
+	/* task complete. */
+	DBG(DBG_CHILD, ("child %d got this\n", res.task.id)) {
+		dumpscores(res.besties, hbos.D, hbos.R);
+	}
+	exit(0);
 }
 
 /* divide up task. Allocates and initializes slots for us.
  * returns: <0=error, >0=#slots created, =0 nothing to do.
 */
 int
-divvy()
+divvy(int depth)
 {
 	int i, j, k, slice;
 	int n, range;
 
 	/* first, set the limits on the vals */
-	hbos.vals.rlo = hbos.pl[hbos.r].rlow;
-	hbos.vals.rhi = hbos.pl[hbos.r].rhi;
+	hbos.vals.vals[depth].lo = hbos.pl[depth].val.lo;
+	hbos.vals.vals[depth].hi = hbos.pl[depth].val.hi;
 
-	if (hbos.task.cpus <= 1) {
+	/* can't Spawn if not old (deep) enougn */
+	if ((hbos.task.cpus <= 1) || (depth < MATURE)) {
 		/* no extra cpus. do the whole thing. */
-		hbos.vals.from = hbos.pl[hbos.r].rlow;
-		hbos.vals.to = hbos.pl[hbos.r].rhi;
+		hbos.vals.vals[depth].from = hbos.pl[hbos.r].val.lo;
+		hbos.vals.vals[depth].to = hbos.pl[hbos.r].val.hi;
+//		DBG(DBG_SPAWN, ("divvy says no\n"));
 		return 0;
 	}
+
+	DBG(DBG_SPAWN, ("divvy says yes\n"));
+	/* we are going to do it. Set up tasks for each child */
 	assert(hbos.slots == NULL);
 
-	range = (hbos.task.to - hbos.task.from) + 1;
-
+	range = (hbos.vals.vals[depth].to - hbos.vals.vals[depth].from) + 1;
 	if (range > hbos.task.cpus) {
+		/* more r's than cpus. use all of them (cpus) */
 		n = hbos.task.cpus;
 	} else {
 		/* more cpus than r-values (or same) */
@@ -656,11 +763,12 @@ divvy()
 	hbos.kids = n;
 	j = hbos.task.cpus;
 	k = range;
+	DBG(DBG_SPAWN, ("making %d slots with %d cpus %d range\n", n, j, k));
 	for (i = 0; i < n; i++) {
 		hbos.slots[i].task.id = i;
-		hbos.slots[i].task.lvl = hbos.r + 1; 
-		hbos.slots[i].task.rhi = hbos.pl[hbos.r+1].rhi;
-		hbos.slots[i].task.rlo = hbos.pl[hbos.r+1].rlow;
+		hbos.slots[i].task.lvl = depth; 
+		hbos.slots[i].task.rhi = hbos.vals.vals[depth].hi;
+		hbos.slots[i].task.rlo = hbos.vals.vals[depth].lo;
 		if (n == range) {
 			hbos.slots[i].task.to = hbos.slots[i].task.from =
 			     (hbos.slots[i].task.rlo + i);
@@ -671,7 +779,7 @@ divvy()
 			k--;
 		} else {
 			hbos.slots[i].task.cpus = 1;
-			if (i = 0) {
+			if (i == 0) {
 				hbos.slots[i].task.from = hbos.slots[i].task.rlo;
 			} else {
 				hbos.slots[i].task.from = hbos.slots[i-1].task.to+1;
@@ -684,10 +792,9 @@ divvy()
 			j--;
 		}
 		sprintf(hbos.slots[i].task.fname,  FNFMT, hbos.slots[i].task.lvl, hbos.slots[i].task.id);
-		hbos.slots[i].status = SS_INIT;
+		hbos.slots[i].status = SS_SET;
 	}
 	assert((j== 0) && (k == 0));
-
 	return n;
 }
 
@@ -776,24 +883,6 @@ int restart(char *fn)
 	}
 	printf("restarting from checkpoint %s\n", cpfn);
 	return 0;
-}
-
-/* at the end, print out everything we found. */
-void
-dumpscores(int D)
-{
-	int d, r, i;
-
-	printf("best scores found this run:\n");
-	for (d=0; d < D; d++) {
-		for (r = 0; r < hbos.limits[d]; r++) {
-			printf("%d darts, %d regions: score=%d; vals=", d+1, r+1, hbos.besties.b[d][r].score);
-			for (i=0; i <= r; i++) {
-				printf("%d,", hbos.besties.b[d][r].vals[i]);
-			}
-			printf("\n");
-		}
-	}
 }
 
 /* at depth r, use val to fill in the frame for r, for all 1...D darts
@@ -904,7 +993,6 @@ int
 work(int depth)
 {
 	sc_t *scores;
-	int rv;
 
 	if (restarting && (depth < hbos.r)) {
 		DBG(DBG_MRF, ("-> restarting depth=%d, r=%d\n", depth, hbos.r+1));
@@ -916,24 +1004,19 @@ work(int depth)
 		if (hbos.r >= hbos.limits[hbos.d]) return -1;	/* important stop condition. */
 
 		if (hbos.r == 0) {
-			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r].rhi = 1;
+			hbos.pl[hbos.r].val.lo = hbos.pl[hbos.r].val.hi = 1;
 		} else  {
-			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r-1].rval + 1;
-			hbos.pl[hbos.r].rhi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
+			hbos.pl[hbos.r].val.lo = hbos.pl[hbos.r-1].val.v + 1;
+			hbos.pl[hbos.r].val.hi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
 		}
-		hbos.pl[hbos.r].rval = hbos.pl[hbos.r].rlow;
+		hbos.pl[hbos.r].val.v = hbos.pl[hbos.r].val.lo;
 
-//		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].rlow, hbos.pl[hbos.r].rhi));
+		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].val.lo, hbos.pl[hbos.r].val.hi));
 	}
 
-	/* check it. */
-	rv = divvy();
-	if (rv > 0) {
 
-	}
-
-	for (/*already set*/; hbos.pl[hbos.r].rval <= hbos.vals.to;
-	    hbos.pl[hbos.r].rval++) {
+	for (/*already set*/; hbos.pl[hbos.r].val.v <= hbos.pl[hbos.r].val.hi;
+	    hbos.pl[hbos.r].val.v++) {
 		/* here is where we CPR */
 		if ((cpval > 0) && (hbos.stat.iters > 0) && ( (hbos.stat.iters % cpval)==0) && (! restarting)) {
 			printf("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth);
@@ -955,15 +1038,15 @@ work(int depth)
 				/* back to normal */
 			}
 		} else {
-			hbos.vals.vals[hbos.r] = hbos.pl[hbos.r].rval;
-			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].rval);
+			hbos.vals.vals[hbos.r].v = hbos.pl[hbos.r].val.v;
+			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].val.v);
 			DBG(DBG_DUMPF, ("frame %d\n",hbos.r )) {
 				dumpframe(hbos.r,hbos.d+1);
 			}
 			if (hbos.r+1 >= hbos.limits[hbos.d]) {
 				continue;
 			}
-			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].rval));
+			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].val.v));
 			hbos.r++;
 			work(depth+1);
 		}
@@ -987,30 +1070,42 @@ work(int depth)
 	return 0;
 }
 
+int
+recover()
+{
+	/* Not implemented yet. */
+	return -1;
+}
+
+
+
 /* hi ho hi ho
  * We need to know start depth to know when to quit.
- * modified for spawning.  Restart not fully working.
+ * modified for Spawning.  Restart not fully working.
  */
-
-
 /*
- * a bit hard here... even without restart.  We have two cases:
- * task based and plane based.  Cannot over-write task on simple
- * recursion, so we can't make everything a task.
+ * a bit hard here... even without restart.  Use task0 as an anchor,
+ * but don't Spawn before maturity.  If restarting most things will
+ * already be set. Restart+Spawn=recover (which I haven't written yet).
+ * Unless restarting, depth and hbos.r should be the same.
+ */
 int
 work2(int depth)
 {
 	sc_t *scores;
 	int rv;
 
-	if ((hbos.d < 0) || (hbos.r < 0)) return -1;
-	if ((hbos.d == 0) && (hbos.r == 0)) return -1;
-	if (hbos.r >= hbos.limits[hbos.d]) return -1;
+	if (!restarting) {
+		assert(depth == hbos.r);
+	}
+	if ((hbos.d < 0) || (depth < 0)) return -1;
+	if ((hbos.d == 0) && (depth == 0)) return -1;
+	if (depth >= hbos.limits[hbos.d]) return -1;
 
 	if (restarting && (depth > hbos.r)) {
 		restarting = 0;
 	}
-	if (restarting)
+	if (restarting) {
 		DBG(DBG_MRF, ("-> restart depth=%d, r=%d\n", depth, hbos.r+1));
 	} else {
 		DBG(DBG_MRF, ("-> call with d=%d r=%d\n", hbos.d+1, hbos.r+1));
@@ -1018,41 +1113,47 @@ work2(int depth)
 	if (! restarting) {
 		/* under restart, should already be set. */
 		if (hbos.r == 0) {
-			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r].rhi = 1;
+			hbos.pl[hbos.r].val.lo = hbos.pl[hbos.r].val.hi = 1;
 		} else  {
-			hbos.pl[hbos.r].rlow = hbos.pl[hbos.r-1].rval + 1;
-			hbos.pl[hbos.r].rhi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
+			hbos.pl[hbos.r].val.lo = hbos.pl[hbos.r-1].val.v + 1;
+			hbos.pl[hbos.r].val.hi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
 		}
-		hbos.pl[hbos.r].rval = hbos.pl[hbos.r].rlow;
+		hbos.pl[hbos.r].val.v = hbos.pl[hbos.r].val.lo;
 	}
 	/* those are the outer limits. copy to vals */
-	hbos.vals.rlo = hbos.pl[hbos.r].rlow;
-	hbos.vals.rhi = hbos.pl[hbos.r].rhi;
+	hbos.vals.vals[depth].lo = hbos.pl[depth].val.lo;
+	hbos.vals.vals[depth].hi = hbos.pl[depth].val.hi;
 	/* see if we are tasked. */
 	if (hbos.task.lvl == depth) {
-		hbos.vals.from = hbos.task.from;
-		hbos.vals.to = hbos.task.to;
+		hbos.vals.vals[depth].from = hbos.task.from;
+		hbos.vals.vals[depth].to = hbos.task.to;
 	} else {
-		hbos.vals.from = hbos.vals.rlow;
-		hbos.vals.to = hbos.vals.rhi;
+		hbos.vals.vals[depth].from = hbos.vals.vals[depth].lo;
+		hbos.vals.vals[depth].to = hbos.vals.vals[depth].hi;
 	}
-	/* now see if we need to spawn. */
-	rv = divvy();
+	/* now see if we need to Spawn. */
+	rv = divvy(depth);
 	if (rv > 0) {
-		DBG(DBG_MRF, (" at r=%d spawning %d\n", hbos.r+1, rv);
-		rv = spawn(-1); /* spawn!spawn!spawn! */
+		if (restarting) {
+			rv = recover();
+			DBG(DBG_CPR, (" at r=%d recover %d\n", depth+1, rv));
+		} else  {
+			DBG(DBG_SPAWN, (" at r=%d Spawning %d\n", depth+1, rv));
+			rv = spawn(-1); /* Spawn!Spawn!Spawn! */
+		}
 		if (rv != 0) {
-			return (babysit());
+			/* parents get to babysit. */
+			return babysit();
 		}
 	}
 
-	DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.vals.from; hbos.vals.to);
+	DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", depth+1, hbos.vals.vals[depth].from, hbos.vals.vals[depth].to));
 	if (depth == checker) {
 		checkpoint(cpfn);
 	}
-	for (hbos.pl[hbos.r].rval = hbos.vals.from;
-	    hbos.pl[hbos.r].rval <= hbos.vals.to;
-	    hbos.pl[hbos.r].rval++) {
+	for (hbos.pl[depth].val.v = hbos.vals.vals[depth].from;
+	    hbos.pl[depth].val.v <= hbos.vals.vals[depth].to;
+	    hbos.pl[depth].val.v++) {
 		/* here is where we CPR */
 		if ((! restarting) && (hbos.stat.iters > 0)) {
 			/* no checkpoint under restart */
@@ -1068,8 +1169,8 @@ work2(int depth)
 			}
 		}
 		if (! restarting) {
-			hbos.vals.vals[hbos.r] = hbos.pl[hbos.r].rval;
-			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].rval);
+			hbos.vals.vals[hbos.r].v = hbos.pl[hbos.r].val.v;
+			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].val.v);
 			DBG(DBG_DUMPF, ("frame %d\n",hbos.r )) {
 				dumpframe(hbos.r,hbos.d+1);
 			}
@@ -1078,10 +1179,16 @@ work2(int depth)
 			}
 			hbos.r++;
 		}
-		DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].rval));
-		work(depth+1);
+		DBG(DBG_MRF, ("recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, depth+1+1, hbos.pl[hbos.r].val.v));
+		work2(depth+1);
 		hbos.r--;
 		hbos.stat.iters++;
+		assert(!restarting);
+		/* see if we can Retire. */
+		if ((depth > 0) && (depth == hbos.task.lvl)) {
+			retire();
+		}
+
 		if (dbg & DBG_HASH) {
 			if ((hbos.stat.iters % hashval) == 0) {
 				printf("#");
@@ -1117,10 +1224,16 @@ initstuff(int D, int R)
 	// should we set bit 0 as well??
 	hbos.pl[0].sc[0].gap = 2;
 	hbos.pl[0].sc[0].maxval = 1;
-	hbos.pl[0].rval = 1;
+	hbos.pl[0].val.v = 1;
 
 	hbos.besties.b[0][0].score = 2;
-	hbos.besties.b[0][0].vals[0] = 1;
+	hbos.besties.b[0][0].vals[0].v = 1;
+
+	/* task0 covers the base */
+	hbos.task = task0;
+	strcpy(hbos.task.fname, cpfn);
+	hbos.task.cpus = ncpus;
+	hbos.ncpus = ncpus;
 
 	DBG(DBG_DUMPF, ("init frame\n")) {
 		dumpscore(hbos.pl[0].sc[0]);
@@ -1162,6 +1275,8 @@ usage(char *me)
 	);
 }
 
+int special = 0;
+
 int
 main(int argc, char **argv)
 {
@@ -1169,13 +1284,16 @@ main(int argc, char **argv)
 	char c;
 	int verbose = 0;
 
-	while ((c = getopt(argc, argv, "vqtcVhH:bD:l:RF:C:n:")) != -1) {
+	while ((c = getopt(argc, argv, "XvqtcVhH:bD:l:RF:C:n:")) != -1) {
 		switch(c) {
+		case 'X':
+			special = 1;
+			break;
 		case 'w':
 			wipe = 1;
 			break;
 		case 'n':
-			hbos.ncpus = strtol(optarg, NULL, 0);
+			ncpus = strtol(optarg, NULL, 0);
 			break;
 		case 'v':
 			verbose++;
@@ -1225,6 +1343,10 @@ main(int argc, char **argv)
 			return 1;
 			break;
 		}
+	}
+
+	if (restarting) {
+		DBG(DBG_CPR, ("restarting\n"));
 	}
 
 	/* on restart, ignore D,R on cmd line. use from file. */
@@ -1285,7 +1407,11 @@ main(int argc, char **argv)
 	if (dbg & DBG_TIME) {
 		hbos.stat.begin = gethrtime();
 	}
-	work(0);
+	if (special) {
+		work2(0);
+	} else {
+		work(0);
+	}
 	if (dbg & DBG_TIME) {
 		hbos.stat.end = gethrtime();
 		hbos.stat.runtime += (hbos.stat.end - hbos.stat.begin);
@@ -1295,7 +1421,7 @@ main(int argc, char **argv)
 	if (dbg & DBG_HASH) {
 		printf("\n");
 	}
-	dumpscores(hbos.D);
+	dumpscores(hbos.besties, hbos.D, hbos.R);
 
 	if (dbg & DBG_TIME) {
 		if (dbg & DBG_CTR) {

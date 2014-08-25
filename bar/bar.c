@@ -665,7 +665,7 @@ int barfnz(bar_t *bar, uint_t bit_index)
 		fb = __builtin_ffsl(w);
 		if (fb != 0) {
 			if ((ndx == (bar->usedwords - 1)) &&
-		 	   (fb +shift > bar->numbits % WORD_SIZE)) {
+		 	   (fb +shift > (bar->numbits-1) % WORD_SIZE)) {
 				return -1;
 			} else {
 				return (fb + shift - 1) + ndx*WORD_SIZE;
