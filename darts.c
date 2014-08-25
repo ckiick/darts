@@ -1011,98 +1011,6 @@ DBG(DBG_FILLIN2, ("summed with d=%d r=%d ", d+1,r-1+1)) {
 	}
 }
 
-/*It's not just a job... 
- * We need to know start depth to know when to quit.
- */
-int
-work(int depth)
-{
-	sc_t *scores;
-
-	if (restarting && (depth < hbos.r)) {
-		DBG(DBG_MRF, ("-> restarting depth=%d, r=%d\n", depth, hbos.r+1));
-	} else {
-
-		DBG(DBG_MRF, ("-> called with d=%d r=%d\n", hbos.d+1, hbos.r+1));
-		if ((hbos.d < 0) || (hbos.r < 0)) return -1;
-		if ((hbos.d == 0) && (hbos.r == 0)) return -1;
-		if (hbos.r >= hbos.limits[hbos.d]) return -1;	/* important stop condition. */
-
-		if (hbos.r == 0) {
-			hbos.pl[hbos.r].val.lo = hbos.pl[hbos.r].val.hi = 1;
-		} else  {
-			hbos.pl[hbos.r].val.lo = hbos.pl[hbos.r-1].val.v + 1;
-			hbos.pl[hbos.r].val.hi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
-		}
-		hbos.pl[hbos.r].val.v = hbos.pl[hbos.r].val.lo;
-
-		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].val.lo, hbos.pl[hbos.r].val.hi));
-	}
-
-#ifdef DEBUG
-if (hbos.pl[hbos.r].val.lo > hbos.pl[hbos.r].val.hi) {
-	printf("!!! hoy smokes it's sdrawkcab from %d to %d at %d,%d\n", hbos.pl[hbos.r].val.lo,hbos.pl[hbos.r].val.hi, hbos.d, depth);
-	
-} /* else */
-#endif
- {
-
-	for (/*already set*/; hbos.pl[hbos.r].val.v <= hbos.pl[hbos.r].val.hi;
-	    hbos.pl[hbos.r].val.v++) {
-		/* here is where we CPR */
-		if ((cpval > 0) && (hbos.stat.iters > 0) && ( (hbos.stat.iters % cpval)==0) && (! restarting)) {
-			printf("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth);
-			checkpoint(cpfn);
-		}
-		if ((stop > 0) && (!restarting) && (hbos.stat.iters >= stop)) {
-			printf("checkpoint and stop at %lu iterations(depth=%d)\n", hbos.stat.iters, depth);
-			checkpoint(cpfn);
-			exit(0);
-		}
-		if (restarting) {
-			if (hbos.stat.iters > stop) {
-				stop = 0;
-			}
-			if (depth < hbos.r) {
-				work(depth+1);
-			} else {
-				restarting = 0;
-				/* back to normal */
-			}
-		} else {
-			hbos.vals.vals[hbos.r].v = hbos.pl[hbos.r].val.v;
-			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].val.v);
-			DBG(DBG_DUMPF, ("frame %d\n",hbos.r )) {
-				dumpframe(hbos.r,hbos.d+1);
-			}
-			if (hbos.r+1 >= hbos.limits[hbos.d]) {
-				continue;
-			}
-			DBG(DBG_MRF, ("  recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, hbos.r+1+1, hbos.pl[hbos.r].val.v));
-			hbos.r++;
-			work(depth+1);
-		}
-		hbos.r--;
-		hbos.stat.iters++;
-		if (dbg & DBG_HASH) {
-			if ((hbos.stat.iters % hashval) == 0) {
-				printf("#");
-				fflush(stdout);
-			}
-		}
-		if (depth == checker) {
-			checkpoint(cpfn);
-		}
-	}
-}
-	DBG(DBG_DUMPV, ("current vals ")) {
-		dumpvals(hbos.r);
-	}
-	DBG(DBG_CTR, ("performed %lu iterations\n", hbos.stat.iters));
-	DBG(DBG_MRF, ("<- returning from d=%d,r=%d\n", hbos.d+1, hbos.r+1));
-	return 0;
-}
-
 int
 recover()
 {
@@ -1455,11 +1363,7 @@ main(int argc, char **argv)
 	if (dbg & DBG_TIME) {
 		hbos.stat.begin = gethrtime();
 	}
-	if (special) {
-		work2(0);
-	} else {
-		work(0);
-	}
+	work2(0);
 	if (dbg & DBG_TIME) {
 		hbos.stat.end = gethrtime();
 		hbos.stat.runtime += (hbos.stat.end - hbos.stat.begin);
