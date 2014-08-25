@@ -394,3 +394,69 @@ d  r  gap	vals 		scores
 2  2
 2  3
 
+V[] = { 1  }
+
+
+work()
+
+D R d r hi lo val
+3 1 3 1  1  1  1
+
+
+fillin(d,r,val)
+d r val
+3 1  1
+2 1 1
+1 1 1 
+
+
+Example: D=3,R=4
+
+work(d=3,r=1)
+	hi=1,lo=1
+	for val = lo to hi
+		fillin(d,r,val)
+
+
+
+hbos.pl[0]
+	sc[0] =s 0x2= , gap = 2, maxval = 1
+	sc[1] =s =0x6 , gap = 3, maxval = 2
+	sc[2]= s =0xe , gap = 5, maxval = 3
+	val = {v = 1, hi = 1, lo = 1, from = 0, to = 0}}
+hbos.pl[1]
+	sc[0] =s =0x22 , gap = 2, maxval = 5}, 
+	sc[1] =s =0x466 , gap = 3, maxval = 10},
+	sc[2]= s =0x8cee , gap = 4, maxval = 15}, 
+	val = {v = 5, hi = 5, lo = 2, from = 0, to = 0}}
+hbos.pl[2]
+	sc[0] =s = 0x92, gap = 2, maxval = 7},
+	sc[1] =s =0x49b6 , gap = 3, maxval = 14},
+	sc[2] =s =0x24dbfe , gap = 10, maxval = 21},
+	val = {v = 6, hi = 4, lo = 6, from = 0, to = 0}
+(gdb) print hbos.pl[3]
+	sc[0] =s=0x492,  gap = 2, maxval = 10}
+	sc[1] =s =0x124db6 , gap = 3, maxval = 20},
+	sc[2] =s =0x4936dffe , gap = 13, maxval = 30},
+	val = {v = 11, hi = 10, lo = 8, from = 0, to = 0}
+
+Depth=2, r=2. for today.
+
+pl	sc	v	gap	hi	lo	BW?
+---	---	--	---	--	---	---
+0	0	1	2	2	2
+0	1	1	3	3	2	
+0	2	1	5	5	2
+1	0	5	2	2	6	Y
+1	1	5	3	3	6	Y
+1	2	5	4	4	6	Y
+2	0	6	2	2	7	Y
+2	1	6	3	3	7	Y
+2	2	6	10	10	7
+3	0	11	2	2	12	Y
+3	1	11	3	3	12	Y
+3	2	11	13	13	12
+
+Now, can we safely skip the BW ones?
+
+it does now, serially.

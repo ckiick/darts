@@ -357,7 +357,7 @@ dumpvals(int R)
 {
 	int i;
 	printf("score=%d:[r=%d] ", hbos.vals.score, R+1);
-	for (i = 1; i < R; i++) {
+	for (i = 0; i < R; i++) {
 		printf("%d, ", hbos.vals.vals[i].v);
 	}
 	printf("%d\n", hbos.vals.vals[i].v);
@@ -685,6 +685,8 @@ spawn(int id)
 			if (dbg & DBG_CUTOFF) {
 				dbg = DBG_NONE;
 			}
+
+if (hbos.task.id != 1) dbg = DBG_NONE;
 			return(0);
 		} else if (fp > 0) {
 			/* parentage */
@@ -761,7 +763,6 @@ divvy(int depth)
 		/* no extra cpus. do the whole thing. */
 		hbos.vals.vals[depth].from = hbos.pl[hbos.r].val.lo;
 		hbos.vals.vals[depth].to = hbos.pl[hbos.r].val.hi;
-//		DBG(DBG_SPAWN, ("divvy says no\n"));
 		return 0;
 	}
 
@@ -1038,6 +1039,13 @@ work(int depth)
 		DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", hbos.r+1, hbos.pl[hbos.r].val.lo, hbos.pl[hbos.r].val.hi));
 	}
 
+#ifdef DEBUG
+if (hbos.pl[hbos.r].val.lo > hbos.pl[hbos.r].val.hi) {
+	printf("!!! hoy smokes it's sdrawkcab from %d to %d at %d,%d\n", hbos.pl[hbos.r].val.lo,hbos.pl[hbos.r].val.hi, hbos.d, depth);
+	
+} /* else */
+#endif
+ {
 
 	for (/*already set*/; hbos.pl[hbos.r].val.v <= hbos.pl[hbos.r].val.hi;
 	    hbos.pl[hbos.r].val.v++) {
@@ -1086,6 +1094,7 @@ work(int depth)
 			checkpoint(cpfn);
 		}
 	}
+}
 	DBG(DBG_DUMPV, ("current vals ")) {
 		dumpvals(hbos.r);
 	}
@@ -1155,6 +1164,13 @@ work2(int depth)
 		hbos.vals.vals[depth].from = hbos.vals.vals[depth].lo;
 		hbos.vals.vals[depth].to = hbos.vals.vals[depth].hi;
 	}
+
+	/* sometimes there's nothing to do */
+	if (hbos.vals.vals[depth].from > hbos.vals.vals[depth].to) {
+		DBG(DBG_MRF, ("<- returning early d=%d,r=%d, nothing to do\n", hbos.d+1, hbos.r+1));
+		return 0;
+	}
+
 	/* now see if we need to Spawn. */
 	rv = divvy(depth);
 	if (rv > 0) {
@@ -1168,10 +1184,16 @@ work2(int depth)
 		if (rv != 0) {
 			/* parents get to babysit. */
 			return babysit();
+		} else {
+			/* set bounds by task. */
+			hbos.vals.vals[depth].from = hbos.task.from;
+			hbos.vals.vals[depth].to = hbos.task.to;
 		}
 	}
 
-	DBG(DBG_MRF, (" Iterate r=%d val from %d to %d\n", depth+1, hbos.vals.vals[depth].from, hbos.vals.vals[depth].to));
+	DBG(DBG_MRF, ("[id=%d] Iterate (d=%d)r=%d val from %d to %d\n", hbos.task.id, hbos.d, depth+1, hbos.vals.vals[depth].from, hbos.vals.vals[depth].to))
+{
+}
 	if (depth == checker) {
 		checkpoint(cpfn);
 	}
@@ -1203,13 +1225,15 @@ work2(int depth)
 			}
 			hbos.r++;
 		}
-		DBG(DBG_MRF, ("recursing with d=%d,r=%d V[r]=%d\n", hbos.d+1, depth+1+1, hbos.pl[hbos.r].val.v));
+		DBG(DBG_MRF, ("recursing with d=%d,r=%d V[r]=%d ", hbos.d+1, depth+1+1, hbos.pl[hbos.r-1].val.v)) {
+dumpvals(hbos.r);
+}
 		work2(depth+1);
 		hbos.r--;
 		hbos.stat.iters++;
 		assert(!restarting);
 		/* see if we can Retire. */
-		if ((depth > 0) && (depth == hbos.task.lvl)) {
+		if ((depth > 0) && (depth == hbos.task.lvl-1)) {
 			retire();
 		}
 
