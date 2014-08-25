@@ -225,81 +225,105 @@ block_t hbos;
 
 /*
  * a few semi-helpful notes.
- * darts are 0-based. if there are n darts, they are numbered 0..n-1.
- * regions are also 0 based, r regions numberes 0 .. r-1.
- * regions and darts are printed using whole numbers 1..d or 1..n.
+ * darts are 0-based. if there are D darts, they are numbered 0..D-1.
+ * regions are also 0 based, R regions numberes 0 .. R-1.
+ * regions and darts are printed using whole numbers 1..d or 1..r.
  * the values are 1-based.  There's an implicit 0-value region, which
  * corresponds to a dart missing the dart board, but we don't bother to
  * track it.
  *
- * method - with 1 dart 1 region, there is only 1 value, and it has
- * to be 1, giving a gap at 2 (score).  This is the foundation case.
- * Incrementing the number of darts (n darts, 1 region) increments
- * the score (S=d+1).  Now we can calculate solutions for any value of d for
- * r=1.  Conversely, with 1 dart it is easy to add another region with
- * value v, by simply adding v to the set of numbers reached and checking 
- * for a change in the score/gap.   So we can construct any d=1,r=m or
- * d=n,r=1.
- * For d=n,r=m, we can construct data that is a set of values for
- * each region and the numbers it can reach with the given number of darts.
- * The score is then the first "gap" in the set of numbers that can be
- * reached.  An optimal solution is the maximum score for all possible
- * region values.
- * A single score for darts d and regions r is calculated from the values
- * assigned to the regions. {V(r)}= { V[1]...V[r]}. This is mapped to a set
- * {B(d,r)} of numbers that can be reached with that combination of values
- * and the given number of darts.  The score S is then the first missing
- * integer in {B(d,r)}.
- * If we have the set {B(d-1,r)}, what happens when we add a dart? Imagine
- * a dartboard with darts in it already.  If we throw another dart we
- * get to add any of the values in {V(r)} to our total (including the
- * case where we miss the board altogether).  Therefore we can extend
- * the set {B(d,r)} from {B(d-1,r)} by adding all v in {V} to the values in
- * {B(d-1,r)}.
- *       for each pair v,b, v in {V(r)} and b in {B(d-1,r)}
- *		{B(d,r} += v+b;
- * However, with an extra dart there are now more combinations that
- * can be made. So we have to include all of them that can be done with
- * the extra dart and NOT the extra region. This is the set {B(d,r-1)}.
- * So to get {B(d,r)} we need {B(d-1,r)} and {B(d,r-1)}.
- * The first can be found by recursing until d=1 is reached, which from above
- * is defined as {B(1,r)} = {V(r)}.
- * Now that we know how to find S(d,r) given {V(r)}, finding the optimal
- * solution requires exploring all possible sets of {V(r)}.  Fortunately,
- * the range of values for any region can be pruned quite a bit. If we
- * are adding a region r, then it doesn't effect the score at all if
- * V[r] is greater than the gap.  So the upper bound on V[r] must be
- * S(d,r-1).  If we order the darts by value, then anything at or below
- * the last value will have already been covered.  So the lower limit
- * is V[r-1]+1.  This again presents a good use of recursion, since we
- * know that V[1] = 1, and S(d,1) = d+1.
- * In order to get S(d,r-1) we have to have {B(d,r-1)}.  Thus to find
- * the optimal V[r] we need both {B(d-1,r)} and {B(d,r-1)}.  Looked at
- * another way, when finding optimal S(d,r) we also get optimal S(1..d, 1..r)
- * thrown in!
- * The algorithm A(D,R) returns the set {V(R)} that yeilds the highest
- * score S for D,R. In fact, it can fill out a matrix of sets for all
- * 1..D,1..R as O[D,R]{V(1..r)} that provides optimal solutions for all
- * values of D and R.
- * A(d,r), in order to avoid repeating combinations of values, starts
- * at r=1. So the initial call is A(D,1) with the limit of R being saved
- * as a global.  Also global is the current set {V(r)}, and the sets
- * {B(1..D,1..R)}, along with the scores S(1..D,1..R).
- * On entry A determines the limits of V[r]. For the initial call this
- * is just 1, otherwise it is V[r-1]+1 to S(d-1,r).  Also we know that
- * S(1,1) must be 2, and that {B(1,1)} = { 1 }.
- * The algorithm iterates V[r] over those limits, first recursing "down" with
- * A(d-1,r) to get the set {B(d-1,r)}. Then it recurses "up" to get
- * A(d,r+1), as long as r < R.  The score for each V[r] is compared to the
- * current best score, and the set {V[r]} with the better score is kept
- * in the optimal score matrix (If S(d,r) > S(O[d,r]), then O[d,r] = {V[r]}).
- * When the initial call to A returns, the matrix O will contain all
- * optimal solutions for the problem for all values of R and D.
+ * To find the optimal solution we need to maximize the score S for
+ * any D darts and R regions.  The brute-force method would be to
+ * generate all possible combinations of values for the regions
+ * and calculate the score for each one.  This takes too long.
+ * Instead we need an inductive/recursive method that can be worked
+ * in parallel.
  * 
- * Note that if the sets {B} are represented as bit-vectors, then
- * "Adding" two sets becomes a bit-wise OR operation, and the operation
- * of "add value v to all values in B" becomes a SHIFT+OR (X={B}|({B}<<v)).
- * Much faster than looping over arrays of integers.
+ * Given the problem with parameters D,R, we need to come up with
+ * the set of values for the regions V[] such that S(D,R,V[]) is the
+ * maximum. In order to compute the score, we must construct the set of
+ * numbers {B} that can be reached using the D,R,V[] values.  The score
+ * then is the first missing number or "gap" in {B}.
+ * 
+ * Induction requires a base case.  We have two parameters, so we need
+ * a foundation for both. With 1 dart and 1 region, there is only 1 value,
+ * and it has to be 1, giving a gap at 2 (score).  This is the foundation case.
+ * Incrementing the number of darts (n darts, 1 region) just adds d to the
+ * set {B}, and increments the score (S=d+1).  Now we can calculate solutions
+ * for any {B(1...D,1,[1])}={1...D}. Conversely, with 1 dart it is easy to add
+ * another region r with value V[r], by simply adding V[r] to {B}. Therefore
+ * {B(1,R,V[])}={V[]}.  So now we have base cases for D=1 or R=1.
+ * 
+ * For the general case consider that we have the set {B(D-1,R,V[])}.
+ * What happens if we add a dart?  Imagine a dartboard made from V[] that
+ * has D-1 darts in it already.  What happens if we throw another dart?
+ * We can add any of the values in V[] to our total (including the case
+ * where we miss the dartboard).  This corresponds to extending B(D-1,R,V[])} by
+ * adding all v in V[1..R] to every value in {B}.  If the size of {B} is large,
+ * then this can be an expensive operation.  However, if we already have
+ * the sub-set {B(D,R-1,V[1..R-1])}, then it includes all the combinations that
+ * do not involve V[R].  In that case we only have to add V[R] to each element
+ * in {B} to get the full set.
+ * Note that the operation to add V[R] to each element in {B} is equivalent to
+ * a "shift-or" if {B} is represented as a bit-vector:  {B} <<|= v.
+ * This gives us:
+ * {B(D,R,V[1..R]} = ({B(D-1,R,V[1..R])} <<| v) | {B(D,R-1,V[1..R-1])}.
+ * 
+ * With the base cases and an inductive rule above, we see that any set
+ * {B(D,R,V[1..R])} can be constructed by reducing D down to 1, and then
+ * iterating (or recursing) up until we get back to D.  We reach R then by
+ * starting with R=1, and increment upwards.  If we have a matrix M[D,R] of
+ * sets {B(1..D,1..R,V[])}, then the algorithm can fill out a complete
+ * matrix for all values of 1..D and 1..R while finding the set for D,R.
+ * This means that we can get all the sub-solutions for a given V[] while
+ * calculating the solution for D,R.
+ * 
+ * Now, how to determine the values in V[]?  Finding the optimal
+ * solution requires exploring all possible combinations of values
+ * that will fit in V[1..R].  Fortunately, the range of values for any one
+ * region can be pruned quite a bit. Given a sub-set {B(D,R-1V[1..R-1])}
+ * with score or gap S, then adding a region whose value V[R] is greater than
+ * the gap will not effect the gap at all. Those values can be excluded.  So
+ * the upper bound on V[R] is S({B(D,R-1V[1..R-1])}).  If we impose an
+ * order on the regions, such that all V[r-1] < V[r], and also order our
+ * dart "throws" by value, then all values at or under V[R-1] will already
+ * be covered.  So we set our lower value to V[R-1]+1.  These two limits
+ * also have convenient base cases, since S(D,1,V[1])=D+1 and V[1] is
+ * always 1.  Iterating over these bounds for V[1..R], and retaining
+ * the highest score for all 1..D,1..R,V[1..R]  will yeild the optimal
+ * solution.
+ * 
+ * An algorithm A(D,R) can then produce a matrix of optimal solutions
+ * O[D,R] containing the score S and set of values V[] such that S is the
+ * maximum for the given R and D.  A(D,R) -> O[D,R]{S, {B(D,R,V[1..R])}}.
+ * Internally A contains a matrix M of all {B(1..D,1..R,V[1..R])}.
+ * It iterates (or recurses) r=1..R, at each r finding the limits vlo and vhi
+ * by using M[d,r-1,V[r-1]].  For each v=vlo..vhi, it recursively fills out
+ * M[d-1,r,V[1..r]] by going down to the base case of d=1 and on return
+ * using the inductive rule to build up the matrix M.
+ * After that, it can then move up to the next r, repeating the procedure.
+ * When it finishes iterating a range of v for a particular level r, it
+ * pops down to r-1 and moves to the next value of v for it, repeating
+ * the procedure.
+ * As each set {B(d,r,V)} is calculated, the score S can be easily found.
+ * By comparing each S(d,r,V) to the O[d,r].S, the optimal values for
+ * all d and r can be found while finding O(D,R).
+ * 
+ * Note: an efficient way to implement {B} is to use a bit-vector.
+ * Then adding two sets becomes a bitwise OR, and the shift-or
+ * can be literally implemented as  B = (B<<v)|B.
+ *
+ * In order to work in parallel, we can note that when going from
+ * vlo to vhi at each r, the solutions are independent and can therefore
+ * be found in parallel.  Threading is not an appropriate model for this,
+ * since the matrix M is singular and changes.  However, a fork would
+ * be exactly right, since it copies the exisitng data (M).  To work
+ * in parallel, the algorithm can at particular values of r, divide
+ * the range of v among n processes, and let them each return the
+ * optimal matrix O for that particular sub-range of v.  WHen the
+ * sub-processes return, their results can be merged together to get
+ * the solutions for all of v, retaining the highest score for each
+ * individual slot in O[D,R].
  */
 
 void
