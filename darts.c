@@ -766,8 +766,8 @@ divvy(int depth)
 	/* can't Spawn if not old (deep) enougn */
 	if ((hbos.task.cpus <= 1) || (depth < MATURE)) {
 		/* no extra cpus. do the whole thing. */
-		hbos.vals.vals[depth].from = hbos.pl[hbos.r].val.lo;
-		hbos.vals.vals[depth].to = hbos.pl[hbos.r].val.hi;
+		hbos.vals.vals[depth].from = hbos.pl[depth].val.lo;
+		hbos.vals.vals[depth].to = hbos.pl[depth].val.hi;
 		return 0;
 	}
 
@@ -1048,11 +1048,13 @@ work2(int depth)
 	if ((hbos.d == 0) && (depth == 0)) return -1;
 	if (depth >= hbos.limits[hbos.d]) return -1;
 
+/*
 	if (restarting && (depth > hbos.r)) {
 		restarting = 0;
 	}
+*/
 	if (restarting) {
-		DBG(DBG_MRF, ("-> restart depth=%d, r=%d\n", depth, hbos.r+1));
+		DBG(DBG_MRF, ("-> restart depth=%d, r=%d\n", depth+1, hbos.r+1));
 	} else {
 		DBG(DBG_MRF, ("-> call with d=%d r=%d\n", hbos.d+1, hbos.r+1));
 	}
@@ -1065,25 +1067,24 @@ work2(int depth)
 			hbos.pl[hbos.r].val.hi = hbos.pl[hbos.r-1].sc[hbos.d].gap;
 		}
 		hbos.pl[hbos.r].val.v = hbos.pl[hbos.r].val.lo;
-	}
-	/* those are the outer limits. copy to vals */
-	hbos.vals.vals[depth].lo = hbos.pl[depth].val.lo;
-	hbos.vals.vals[depth].hi = hbos.pl[depth].val.hi;
-	/* see if we are tasked. */
-	if (hbos.task.lvl == depth) {
-		hbos.vals.vals[depth].from = hbos.task.from;
-		hbos.vals.vals[depth].to = hbos.task.to;
-	} else {
-		hbos.vals.vals[depth].from = hbos.vals.vals[depth].lo;
-		hbos.vals.vals[depth].to = hbos.vals.vals[depth].hi;
-	}
+		/* those are the outer limits. copy to vals */
+		hbos.vals.vals[depth].lo = hbos.pl[depth].val.lo;
+		hbos.vals.vals[depth].hi = hbos.pl[depth].val.hi;
+		/* see if we are tasked. */
+		if (hbos.task.lvl == depth) {
+			hbos.vals.vals[depth].from = hbos.task.from;
+			hbos.vals.vals[depth].to = hbos.task.to;
+		} else {
+			hbos.vals.vals[depth].from = hbos.vals.vals[depth].lo;
+			hbos.vals.vals[depth].to = hbos.vals.vals[depth].hi;
+		}
 
-	/* sometimes there's nothing to do */
-	if (hbos.vals.vals[depth].from > hbos.vals.vals[depth].to) {
-		DBG(DBG_MRF, ("<- returning early d=%d,r=%d, nothing to do\n", hbos.d+1, hbos.r+1));
-		return 0;
-	}
-
+		/* sometimes there's nothing to do */
+		if (hbos.vals.vals[depth].from > hbos.vals.vals[depth].to) {
+DBG(DBG_MRF, ("<- returning early d=%d,r=%d, nothing to do\n", hbos.d+1, hbos.r+1));
+			return 0;
+		}
+	} /* end ! restarting */
 	/* now see if we need to Spawn. */
 	rv = divvy(depth);
 	if (rv > 0) {
@@ -1104,14 +1105,15 @@ work2(int depth)
 		}
 	}
 
-	DBG(DBG_MRF, ("[id=%d] Iterate (d=%d)r=%d val from %d to %d\n", hbos.task.id, hbos.d, depth+1, hbos.vals.vals[depth].from, hbos.vals.vals[depth].to))
-{
-}
-	if (depth == checker) {
-//		checkpoint(cpfn);
-		wall = HIT;
+	DBG(DBG_MRF, ("[id=%d] Iterate (d=%d)r=%d val from %d to %d\n", hbos.task.id, hbos.d, depth+1, hbos.vals.vals[depth].from, hbos.vals.vals[depth].to));
+	
+	if (! restarting) {
+		if (depth == checker) {
+			wall = HIT;
+		}
+		hbos.pl[depth].val.v = hbos.vals.vals[depth].from;
 	}
-	for (hbos.pl[depth].val.v = hbos.vals.vals[depth].from;
+	for (/* already set */;
 	    hbos.pl[depth].val.v <= hbos.vals.vals[depth].to;
 	    hbos.pl[depth].val.v++) {
 		/* here is where we CPR */
@@ -1119,14 +1121,11 @@ work2(int depth)
 			/* no checkpoint under restart */
 			if (cpval && ((hbos.stat.iters % cpval) == 0)) {
 				DBG(DBG_CPR, ("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth));
-//				checkpoint(cpfn);
 				wall = HIT;
 			}
 			if (stop && (hbos.stat.iters >= stop)) {
 				stop = 0;
 				DBG(DBG_CPR, ("checkpoint and stop at %lu iterations(depth=%d)\n", hbos.stat.iters, depth));
-//				checkpoint(cpfn);
-//				exit(0);
 				wall = QUIT;
 			}
 		}
@@ -1137,7 +1136,11 @@ work2(int depth)
 			}
 			wall = 0;	// reset.
 		}
-		if (! restarting) {
+		/* restart where we left off */
+		if ((restarting) && (depth == hbos.r)) {
+			restarting = 0;
+		}
+		if (!restarting) {
 			hbos.vals.vals[hbos.r].v = hbos.pl[hbos.r].val.v;
 			fillin(hbos.d, hbos.r, hbos.pl[hbos.r].val.v);
 			DBG(DBG_DUMPF, ("frame %d\n",hbos.r )) {
@@ -1148,7 +1151,7 @@ work2(int depth)
 			}
 			hbos.r++;
 		}
-		DBG(DBG_MRF, ("recursing with d=%d,r=%d V[r]=%d ", hbos.d+1, depth+1+1, hbos.pl[hbos.r-1].val.v)) {
+		DBG(DBG_MRF, ("recursing with d=%d,r=%d V[r]=%d ", hbos.d+1, depth+1+1, hbos.pl[depth].val.v)) {
 dumpvals(hbos.r);
 }
 		work2(depth+1);
