@@ -1,11 +1,24 @@
 
+darts:	darts-nd
+	cp darts-nd darts
 
+debug:	darts-dbg darts-dbg.64
 
-darts:	darts.c
-	gcc -O5 darts.c ./bar/bar.c -o darts -I./bar -lrt
+nondebug:	darts-nd darts-nd.64
 
-debug:
-	gcc -DDEBUG=1 -g -ggdb darts.c ./bar/bar.c -o darts -I./bar -lrt
+darts-nd:	darts.c
+	gcc -O5 darts.c ./bar/bar.c -o darts-nd -I./bar -lrt
+
+darts-nd.64:	darts.c
+	gcc -m64 -O5 darts.c ./bar/bar.c -o darts-nd.64 -I./bar -lrt
+
+darts-dbg:		darts.c
+	gcc -DDEBUG=1 -g -ggdb darts.c ./bar/bar.c -o darts-dbg -I./bar -lrt
+
+darts-dbg.64:		darts.c
+	gcc -m64 -DDEBUG=1 -g -ggdb darts.c ./bar/bar.c -o darts-dbg.64 -I./bar -lrt
+
+all:	debug	nondebug
 
 darts.prof:	darts.c
 	gcc -ggdb -g -pg -fprofile-arcs -ftest-coverage -I./bar darts.c ./bar/bar.c -o darts.prof -lrt

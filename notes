@@ -1,4 +1,33 @@
 
+CPR and parallel operation.
+
+Combining these two is tricky.  There are several scenarios.
+
+ - while running with ncpus, the entire run is stopped or killed off.
+We want to be able to restart instead of starting over.
+
+- while running with ncpus, a child process dies.
+we need to be able to recover the work it did, and to respawn it.
+
+- while running with ncpus, the main parent process dies.
+In that case we need a way to recover the data from our predecessor.
+
+- for whatever reason, a bunch of results files are left around.
+it would be nice to recover that information and fill in the gaps.
+
+- we do a short run, save the results.  When we do a longer run,
+it would be helpful to use the previous results.
+
+
+We currently support single-process CPR.
+For MPCPR we need:
+	- unique filenames for each process CPR and res file
+	- way of segregating data from different runs
+	- options to configure how often checkpoints are made.
+	- automatic recovery
+
+
+
 Parallelizing.
 
 Thread based || doesn't seem to work to well here.

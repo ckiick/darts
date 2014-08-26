@@ -91,8 +91,8 @@ hrtime_t gethrtime()
 #endif
 
 #define	CPFN	"darts.cpr"
-#define	FNSZ	32
-#define	FNFMT	"darts_r%02d_%04d"
+#define	FNSZ	64
+#define	FNFMT	"darts_r%02d_%04d_%05d"
 #define MAXR	40
 #define	MAXD	6
 #define MATURE	2	/* reproductive age */
@@ -103,7 +103,7 @@ const int def_limits[MAXD] = { 40, 40, 40, 30, 20, 10 };
 uint64_t	hashval = 100000;	// iters per hash
 uint64_t	stop = 0;		// iter limit
 uint64_t	cpval = 0;		// checkpoint interval
-int		checker;		// checkpoint on r level
+int		checker = -1;		// checkpoint on r level
 char		*cpfn = NULL;		// checkpoint filename
 char		def_cpfn[] = CPFN;	// default cpfn
 int		restarting = 0;		// -R - restart from checkpoint
@@ -690,8 +690,6 @@ spawn(int id)
 			if (dbg & DBG_CUTOFF) {
 				dbg = DBG_NONE;
 			}
-
-if (hbos.task.id != 1) dbg = DBG_NONE;
 			return(0);
 		} else if (fp > 0) {
 			/* parentage */
