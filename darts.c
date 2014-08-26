@@ -16,13 +16,13 @@
  * -V : display version info
  * -q : quiet. Shhhhhhh....
  * -l limit : quit after limit evals.
- * -O file : write debug output to file instead of stdout.
  * -C interval: checkpoint, every interval evals. Also when interrupted.
  * -R fname: use file to restart from checkpoint.
  * -n ncpus: work using ncpus at once.
+ * -T seconds: checkpoint and quit after seconds realtime.
  */
 
-#define VER	"0.8.5"	// using  bar
+#define VER	"0.9.5"
 
 #ifdef __sparc
 #include <sys/types.h>
@@ -110,6 +110,11 @@ int		restarting = 0;		// -R - restart from checkpoint
 long		dbg = DBG_NONE;		// debug/verbose and other flags
 int		wipe = 0;		// wipe - clean up and quit
 int		ncpus = 0;		// -n how many processes
+int		timeout = 0;		// runtime limit (in seconds)
+int		wall = 0;		// generic CPR/quit flag
+
+#define		HIT	1		/* hit the wall (checkpoint) */
+#define		QUIT	3		/* quit after checkpoint */
 
 /* this is the data for a particular (d,r,{V[r]}). */
 typedef struct _sc {
@@ -1103,7 +1108,8 @@ work2(int depth)
 {
 }
 	if (depth == checker) {
-		checkpoint(cpfn);
+//		checkpoint(cpfn);
+		wall = HIT;
 	}
 	for (hbos.pl[depth].val.v = hbos.vals.vals[depth].from;
 	    hbos.pl[depth].val.v <= hbos.vals.vals[depth].to;
@@ -1113,14 +1119,23 @@ work2(int depth)
 			/* no checkpoint under restart */
 			if (cpval && ((hbos.stat.iters % cpval) == 0)) {
 				DBG(DBG_CPR, ("checkpoint at %lu iterations (depth=%d)\n", hbos.stat.iters, depth));
-				checkpoint(cpfn);
+//				checkpoint(cpfn);
+				wall = HIT;
 			}
 			if (stop && (hbos.stat.iters >= stop)) {
 				stop = 0;
 				DBG(DBG_CPR, ("checkpoint and stop at %lu iterations(depth=%d)\n", hbos.stat.iters, depth));
-				checkpoint(cpfn);
+//				checkpoint(cpfn);
+//				exit(0);
+				wall = QUIT;
+			}
+		}
+		if (wall >= HIT) {
+			checkpoint(cpfn);
+			if (wall >= QUIT) {
 				exit(0);
 			}
+			wall = 0;	// reset.
 		}
 		if (! restarting) {
 			hbos.vals.vals[hbos.r].v = hbos.pl[hbos.r].val.v;
@@ -1203,6 +1218,10 @@ initstuff(int D, int R)
 			hbos.limits[i] = def_limits[i];
 		}
 	}
+
+	/* set timeout limit */
+	alarm(timeout);
+
 	/* might be good enough for now. */
 	DBG(DBG_INIT, ("init complete\n"));
 }
@@ -1210,11 +1229,11 @@ initstuff(int D, int R)
 void
 usage(char *me)
 {
-	fprintf(stderr, "usage: %s [-vqtcVhb] [-H interval] [-C cnt] [-n cpus]"
-		" [-l limit] [-F file ] [-D val] Darts Regions\n", me);
-	fprintf(stderr, "usage: %s -R [-vqtcVhb] [-H interval] [-C cnt]"
-		" [-l limit] [-F file ] [-D val]\n", me);
-	fprintf(stderr, "\t-v: verbose. use multiple time for more.\n"
+	fprintf(stderr, "usage: %s [-wvqtcVhb] [-H interval] [-C cnt] [-n cpus]"
+		"[-T secs] [-l limit] [-F file ] [-D val] Darts Regions\n", me);
+	fprintf(stderr, "usage: %s -R [-wvqtcVhb] [-H interval] [-C cnt]"
+		"[-T secs] [-l limit] [-F file ] [-D val]\n", me);
+	fprintf(stderr, "\t-v: verbose. use multiple times for more.\n"
 		"\t-q: quiet. turns off verbose.\n"
 		"\t-t: display execution time.\n"
 		"\t-c: show iteration counts\n"
@@ -1228,10 +1247,32 @@ usage(char *me)
 		"\t-R restart execution from checkpoint file.\n"
 		"\t-F filename: use filename for checkpoint file.\n"
 		"\t-C interval: save checkpoint file every interval iterations.\n"
+		"\t-T secs: checkpoint and quit after secs runtime\n"
+		"\t-w: wipe (cleanup) any residual files and exit\n"
 	);
 }
 
-int special = 0;
+void
+quithdlr(int sig)
+{
+	wall = QUIT;
+}
+
+/* whole program or process setup. always done. */
+void
+setup()
+{
+	struct sigaction qsa;
+	/* signal handlers. Do a graceful shutdown. */
+	qsa.sa_handler = quithdlr;
+	sigemptyset(&qsa.sa_mask);
+	qsa.sa_flags = 0;
+
+	sigaction(SIGINT, &qsa, NULL);
+	sigaction(SIGHUP, &qsa, NULL);
+	sigaction(SIGTERM, &qsa, NULL);
+	sigaction(SIGALRM, &qsa, NULL);
+}
 
 int
 main(int argc, char **argv)
@@ -1240,10 +1281,10 @@ main(int argc, char **argv)
 	char c;
 	int verbose = 0;
 
-	while ((c = getopt(argc, argv, "XvqtcVhH:bD:l:RF:C:n:")) != -1) {
+	while ((c = getopt(argc, argv, "vqtcVhH:bD:l:RF:C:n:T:")) != -1) {
 		switch(c) {
-		case 'X':
-			special = 1;
+		case 'T':
+			timeout = strtol(optarg, NULL, 0);
 			break;
 		case 'w':
 			wipe = 1;
@@ -1345,6 +1386,10 @@ main(int argc, char **argv)
 		case -1: dbg = DBG_NONE;
 			break;
 	}
+
+	/* always call setup */
+	setup();
+
 	DBG(DBG_DBG, ("debug is 0x%lX\n", dbg));
 	DBG(DBG_VER, ("version %s\n", VER));
 
@@ -1352,7 +1397,7 @@ main(int argc, char **argv)
 	if (! restarting) {
 		initstuff(D, R);
 	}
-	
+
 	if (restarting) {
 		if (restart(cpfn) < 0) {
 			printf("failed to restart. Abort.\n");
